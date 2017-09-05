@@ -27,6 +27,7 @@
 package top.marchand.maven.gaulois.compiler.utils;
 
 import java.io.File;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -45,12 +46,15 @@ public class GauloisConfigScanner extends DefaultHandler2 {
     private final List<File> xslDirectories;
     private final File outputDirectory;
     private final Map<File,File> xslToCompile;
+    private final List<String> errors;
+    private int uriErrorCount = 0;
     
     public GauloisConfigScanner(List<File> xslDirectories, File outputDirectory) {
         super();
         this.xslDirectories=xslDirectories;
         this.outputDirectory=outputDirectory;
         xslToCompile = new HashMap<>();
+        errors = new ArrayList<>();
     }
 
     @Override
@@ -60,6 +64,10 @@ public class GauloisConfigScanner extends DefaultHandler2 {
             String href = attributes.getValue("href");
             if(!href.startsWith("cp:/")) {
                 hasError = true;
+                if(uriErrorCount<10) {
+                    errors.add(href+" is an invalid URI. Only URI based on cp:/ protocol are supported");
+                    uriErrorCount++;
+                }
             } else {
                 String path = href.substring(4);
                 boolean found = false;
@@ -78,5 +86,9 @@ public class GauloisConfigScanner extends DefaultHandler2 {
             }
         }
     }
+    
+    public boolean hasErrors() { return hasError; }
+    public List<String> getErrorMessages() { return errors; }
+    public Map<File,File> getXslToCompile() { return xslToCompile; }
     
 }

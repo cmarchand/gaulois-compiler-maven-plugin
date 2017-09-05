@@ -28,18 +28,33 @@ package top.marchand.maven.gaulois.compiler;
 
 import java.io.File;
 import java.io.FileNotFoundException;
+import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import org.apache.commons.io.FilenameUtils;
+import javax.xml.parsers.ParserConfigurationException;
+import javax.xml.parsers.SAXParserFactory;
+import javax.xml.transform.Source;
+import javax.xml.transform.stream.StreamSource;
+import net.sf.saxon.s9api.SaxonApiException;
+import net.sf.saxon.s9api.Serializer;
+import net.sf.saxon.s9api.XsltExecutable;
+import net.sf.saxon.s9api.XsltTransformer;
 import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugin.MojoFailureException;
 import org.apache.maven.plugin.logging.Log;
 import org.apache.maven.plugins.annotations.LifecyclePhase;
 import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
+import org.xml.sax.Attributes;
+import org.xml.sax.SAXException;
+import org.xml.sax.XMLFilter;
+import org.xml.sax.XMLReader;
+import org.xml.sax.helpers.ParserAdapter;
+import org.xml.sax.helpers.XMLFilterImpl;
+import top.marchand.maven.gaulois.compiler.utils.GauloisConfigScanner;
 import top.marchand.xml.maven.plugin.xsl.AbstractCompiler;
 
 @Mojo(name="gaulois-compiler", defaultPhase = LifecyclePhase.COMPILE)
@@ -53,7 +68,7 @@ public class GCMojo extends AbstractCompiler {
     private File classesDirectory;
     
     @Parameter
-    List<FileSet> filesets;
+    List<FileSet> gauloisPipeFilesets;
     
     @Parameter
     private File catalog;
@@ -61,15 +76,19 @@ public class GCMojo extends AbstractCompiler {
     @Parameter(defaultValue = "${project.basedir}")
     private File projectBaseDir;
     
+    private XsltExecutable gauloisCompilerXsl;
+    
     /**
      * The list of directories where XSL sources are located in
      */
     @Parameter
     List<File> xslSourceDirs;
+    
+    public static final SAXParserFactory PARSER_FACTORY = SAXParserFactory.newInstance();
 
     @Override
     public void execute() throws MojoExecutionException, MojoFailureException {
-        if(filesets==null) {
+        if(gauloisPipeFilesets==null) {
             getLog().error(LOG_PREFIX+"\n"+ERROR_MESSAGE);
             throw new MojoExecutionException(ERROR_MESSAGE);
         }
@@ -83,26 +102,47 @@ public class GCMojo extends AbstractCompiler {
         boolean hasError = false;
         Map<File,File> gauloisConfigToCompile = new HashMap<>();
         Map<File,File> xslToCompile = new HashMap<>();
-        for(FileSet fs: filesets) {
+        getLog().debug(LOG_PREFIX+" looking for gaulois-pipe config files");
+        for(FileSet fs: gauloisPipeFilesets) {
             Path basedir = new File(fs.getDir()).toPath();
+            getLog().debug("looking in "+basedir.toString());
             for(Path p: fs.getFiles(log)) {
+                getLog().debug("found "+p.toString());
                 File sourceFile = basedir.resolve(p).toFile();
                 Path targetPath = p.getParent()==null ? targetDir : targetDir.resolve(p.getParent());
                 String sourceFileName = sourceFile.getName();
-//                getLog().debug(LOG_PREFIX+" sourceFileName="+sourceFileName);
-//                String targetFileName = FilenameUtils.getBaseName(sourceFileName).concat(".sef");
-//                getLog().debug(LOG_PREFIX+" targetFileName="+targetFileName);
                 // we keep the same extension for gaulois config files
                 File targetFile = targetPath.resolve(sourceFileName).toFile();
-                //compileFile(sourceFile, targetFile);
                 gauloisConfigToCompile.put(sourceFile, targetFile);
-                scanGauloisFile(sourceFile, targetFile, gauloisConfigToCompile, xslToCompile, targetDir);
+                hasError |= scanGauloisFile(sourceFile, targetFile, gauloisConfigToCompile, xslToCompile, targetDir);
             }
+        }
+        if(!hasError) {
+            for(File xslSource: xslToCompile.keySet()) {
+                try {
+                    compileFile(xslSource, xslToCompile.get(xslSource));
+                } catch (FileNotFoundException | SaxonApiException ex) {
+                    getLog().warn("while compiling "+xslSource.getAbsolutePath(), ex);
+                    hasError = true;
+                }
+            }
+            Source xsl = new StreamSource(this.getClass().getResourceAsStream("/top/marchand/maven/gaulois/compiler/gaulois-compiler.xsl"));
+            try {
+                gauloisCompilerXsl = getXsltCompiler().compile(xsl);
+                for(File gSrc: gauloisConfigToCompile.keySet()) {
+                    compileGaulois(gSrc, gauloisConfigToCompile.get(gSrc));
+                }
+            } catch(Exception ex) {
+                hasError = true;
+                getLog().error(ex);
+            }
+        } else {
+            getLog().warn(LOG_PREFIX+" Errors occured");
         }
     }
     
     private static final String LOG_PREFIX = "[gaulois-compiler]";
-    private static final String ERROR_MESSAGE = "<filesets>\n\t<fileset>\n\t\t<dir>src/main/xsl...</dir>\n\t</fileset>\n</filesets>\n is required in gaulois-compiler-maven-plugin configuration";
+    private static final String ERROR_MESSAGE = "<gauloisPipeFilesets>\n\t<gauloisPipeFileset>\n\t\t<dir>src/main/xsl...</dir>\n\t</gauloisPipeFileset>\n</gauloisPipeFilesets>\n is required in gaulois-compiler-maven-plugin configuration";
 
     @Override
     public File getCatalogFile() {
@@ -112,11 +152,46 @@ public class GCMojo extends AbstractCompiler {
      * Scans a gaulois config file to extract all xslt files, and store them into <tt>xslToCompile</tt>
      * <tt>xslt/@href</tt> <strong>MUST</strong> be an absolute URI, in cp:/ protocol. 
      * Else, the whole gaulois-pipe config file is ignored.
-     * @param sourceFile
-     * @param xslToCompile
-     * @param targetDir 
+     * @param sourceFile The file to scan. It <strong>MUST</strong> be a gaulois config file.
+     * @param targetFile The target file where scanned file will be stored.
+     * @param gauloisConfigToCompile The Map to store all gaulois config file to compile
+     * @param xslToCompile The Map to store all XSL to compile
+     * @param targetDir The build dir
+     * @return <tt>true</tt> if an error occured
      */
-    private void scanGauloisFile(File sourceFile, File targetFile, Map<File, File> gauloisConfigToCompile, Map<File, File> xslToCompile, Path targetDir) {
-        
+    protected boolean scanGauloisFile(File sourceFile, File targetFile, Map<File, File> gauloisConfigToCompile, Map<File, File> xslToCompile, Path targetDir) {
+        try {
+            final XMLReader reader = new ParserAdapter(PARSER_FACTORY.newSAXParser().getParser());
+            final GauloisConfigScanner scanner = new GauloisConfigScanner(xslSourceDirs, classesDirectory);
+            XMLFilter filter = new XMLFilterImpl(reader) {
+                @Override
+                public void startElement(String uri, String localName, String qName, Attributes atts) throws SAXException {
+                    super.startElement(uri, localName, qName, atts);
+                    scanner.startElement(uri, localName, qName, atts);
+                }
+            };
+            filter.parse(sourceFile.getAbsolutePath());
+            if(scanner.hasErrors()) {
+                for(String errorMsg: scanner.getErrorMessages()) {
+                    getLog().error(errorMsg);
+                }
+            } else {
+                xslToCompile.putAll(scanner.getXslToCompile());
+                gauloisConfigToCompile.put(sourceFile, targetFile);
+            }
+            return scanner.hasErrors();
+        } catch(ParserConfigurationException | SAXException | IOException ex) {
+            getLog().error("while scanning "+sourceFile.getAbsolutePath(), ex);
+            return true;
+        }
+    }
+    protected void compileGaulois(File source, File target) throws SaxonApiException {
+        XsltTransformer tr = gauloisCompilerXsl.load();
+        Serializer ser = getProcessor().newSerializer(target);
+        ser.setOutputProperty(Serializer.Property.METHOD, "xml");
+        ser.setOutputProperty(Serializer.Property.INDENT, "yes");
+        tr.setDestination(tr);
+        tr.setSource(new StreamSource(source));
+        tr.transform();
     }
 }
