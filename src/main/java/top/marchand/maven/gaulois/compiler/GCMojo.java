@@ -27,18 +27,23 @@
 package top.marchand.maven.gaulois.compiler;
 
 import java.io.File;
+import java.io.FileNotFoundException;
+import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
-import org.apache.maven.plugin.AbstractMojo;
+import java.util.Map;
+import org.apache.commons.io.FilenameUtils;
 import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugin.MojoFailureException;
+import org.apache.maven.plugin.logging.Log;
 import org.apache.maven.plugins.annotations.LifecyclePhase;
 import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
-import top.marchand.xml.maven.plugin.xsl.FileSet;
+import top.marchand.xml.maven.plugin.xsl.AbstractCompiler;
 
 @Mojo(name="gaulois-compiler", defaultPhase = LifecyclePhase.COMPILE)
-public class GCMojo extends AbstractMojo {
+public class GCMojo extends AbstractCompiler {
     
     /**
      * The directory containing generated classes of the project being tested. 
@@ -72,8 +77,46 @@ public class GCMojo extends AbstractMojo {
         if(xslSourceDirs.isEmpty()) {
             xslSourceDirs.add(new File(projectBaseDir, "src/main/xsl"));
         }
+        Log log = getLog();
+        initSaxon();
+        Path targetDir = classesDirectory.toPath();
+        boolean hasError = false;
+        Map<File,File> gauloisConfigToCompile = new HashMap<>();
+        Map<File,File> xslToCompile = new HashMap<>();
+        for(FileSet fs: filesets) {
+            Path basedir = new File(fs.getDir()).toPath();
+            for(Path p: fs.getFiles(log)) {
+                File sourceFile = basedir.resolve(p).toFile();
+                Path targetPath = p.getParent()==null ? targetDir : targetDir.resolve(p.getParent());
+                String sourceFileName = sourceFile.getName();
+//                getLog().debug(LOG_PREFIX+" sourceFileName="+sourceFileName);
+//                String targetFileName = FilenameUtils.getBaseName(sourceFileName).concat(".sef");
+//                getLog().debug(LOG_PREFIX+" targetFileName="+targetFileName);
+                // we keep the same extension for gaulois config files
+                File targetFile = targetPath.resolve(sourceFileName).toFile();
+                //compileFile(sourceFile, targetFile);
+                gauloisConfigToCompile.put(sourceFile, targetFile);
+                scanGauloisFile(sourceFile, targetFile, gauloisConfigToCompile, xslToCompile, targetDir);
+            }
+        }
     }
     
     private static final String LOG_PREFIX = "[gaulois-compiler]";
     private static final String ERROR_MESSAGE = "<filesets>\n\t<fileset>\n\t\t<dir>src/main/xsl...</dir>\n\t</fileset>\n</filesets>\n is required in gaulois-compiler-maven-plugin configuration";
+
+    @Override
+    public File getCatalogFile() {
+        return catalog;
+    }
+    /**
+     * Scans a gaulois config file to extract all xslt files, and store them into <tt>xslToCompile</tt>
+     * <tt>xslt/@href</tt> <strong>MUST</strong> be an absolute URI, in cp:/ protocol. 
+     * Else, the whole gaulois-pipe config file is ignored.
+     * @param sourceFile
+     * @param xslToCompile
+     * @param targetDir 
+     */
+    private void scanGauloisFile(File sourceFile, File targetFile, Map<File, File> gauloisConfigToCompile, Map<File, File> xslToCompile, Path targetDir) {
+        
+    }
 }
