@@ -40,6 +40,7 @@ import javax.xml.transform.Source;
 import javax.xml.transform.stream.StreamSource;
 import net.sf.saxon.s9api.SaxonApiException;
 import net.sf.saxon.s9api.Serializer;
+import net.sf.saxon.s9api.XdmNode;
 import net.sf.saxon.s9api.XsltExecutable;
 import net.sf.saxon.s9api.XsltTransformer;
 import org.apache.maven.plugin.MojoExecutionException;
@@ -101,7 +102,7 @@ public class GCMojo extends AbstractCompiler {
         Path targetDir = classesDirectory.toPath();
         boolean hasError = false;
         Map<File,File> gauloisConfigToCompile = new HashMap<>();
-        Map<File,File> xslToCompile = new HashMap<>();
+        Map<Source,File> xslToCompile = new HashMap<>();
         getLog().debug(LOG_PREFIX+" looking for gaulois-pipe config files");
         for(FileSet fs: gauloisPipeFilesets) {
             Path basedir = new File(fs.getDir()).toPath();
@@ -118,11 +119,12 @@ public class GCMojo extends AbstractCompiler {
             }
         }
         if(!hasError) {
-            for(File xslSource: xslToCompile.keySet()) {
+            for(Source xslSource: xslToCompile.keySet()) {
                 try {
+                    getLog().debug("compiling "+xslSource.getSystemId());
                     compileFile(xslSource, xslToCompile.get(xslSource));
                 } catch (FileNotFoundException | SaxonApiException ex) {
-                    getLog().warn("while compiling "+xslSource.getAbsolutePath(), ex);
+                    getLog().warn("while compiling "+xslSource.getSystemId(), ex);
                     hasError = true;
                 }
             }
@@ -130,6 +132,7 @@ public class GCMojo extends AbstractCompiler {
             try {
                 gauloisCompilerXsl = getXsltCompiler().compile(xsl);
                 for(File gSrc: gauloisConfigToCompile.keySet()) {
+                    getLog().debug("compiling "+gSrc.getAbsolutePath());
                     compileGaulois(gSrc, gauloisConfigToCompile.get(gSrc));
                 }
             } catch(Exception ex) {
@@ -159,10 +162,10 @@ public class GCMojo extends AbstractCompiler {
      * @param targetDir The build dir
      * @return <tt>true</tt> if an error occured
      */
-    protected boolean scanGauloisFile(File sourceFile, File targetFile, Map<File, File> gauloisConfigToCompile, Map<File, File> xslToCompile, Path targetDir) {
+    protected boolean scanGauloisFile(File sourceFile, File targetFile, Map<File, File> gauloisConfigToCompile, Map<Source, File> xslToCompile, Path targetDir) {
         try {
             final XMLReader reader = new ParserAdapter(PARSER_FACTORY.newSAXParser().getParser());
-            final GauloisConfigScanner scanner = new GauloisConfigScanner(xslSourceDirs, classesDirectory);
+            final GauloisConfigScanner scanner = new GauloisConfigScanner(xslSourceDirs, classesDirectory, getUriResolver(), getLog());
             XMLFilter filter = new XMLFilterImpl(reader) {
                 @Override
                 public void startElement(String uri, String localName, String qName, Attributes atts) throws SAXException {
@@ -188,10 +191,10 @@ public class GCMojo extends AbstractCompiler {
     protected void compileGaulois(File source, File target) throws SaxonApiException {
         XsltTransformer tr = gauloisCompilerXsl.load();
         Serializer ser = getProcessor().newSerializer(target);
-        ser.setOutputProperty(Serializer.Property.METHOD, "xml");
-        ser.setOutputProperty(Serializer.Property.INDENT, "yes");
-        tr.setDestination(tr);
-        tr.setSource(new StreamSource(source));
+        tr.setDestination(ser);
+        XdmNode sourceNode = getBuilder().build(source);
+        tr.setInitialContextNode(sourceNode);
         tr.transform();
+        tr.close();
     }
 }

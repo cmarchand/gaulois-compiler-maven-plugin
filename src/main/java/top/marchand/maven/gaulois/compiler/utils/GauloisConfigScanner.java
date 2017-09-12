@@ -27,12 +27,24 @@
 package top.marchand.maven.gaulois.compiler.utils;
 
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.net.MalformedURLException;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.net.URL;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import javax.xml.transform.Source;
+import javax.xml.transform.TransformerException;
+import javax.xml.transform.URIResolver;
+import javax.xml.transform.sax.SAXSource;
 import org.apache.commons.io.FilenameUtils;
+import org.apache.maven.plugin.logging.Log;
 import org.xml.sax.Attributes;
+import org.xml.sax.InputSource;
 import org.xml.sax.SAXException;
 import org.xml.sax.ext.DefaultHandler2;
 
@@ -45,14 +57,18 @@ public class GauloisConfigScanner extends DefaultHandler2 {
     boolean hasError = false;
     private final List<File> xslDirectories;
     private final File outputDirectory;
-    private final Map<File,File> xslToCompile;
+    private final Map<Source,File> xslToCompile;
     private final List<String> errors;
+    private final URIResolver resolver;
     private int uriErrorCount = 0;
+    private final Log log;
     
-    public GauloisConfigScanner(List<File> xslDirectories, File outputDirectory) {
+    public GauloisConfigScanner(List<File> xslDirectories, File outputDirectory, URIResolver resolver, Log log) {
         super();
         this.xslDirectories=xslDirectories;
         this.outputDirectory=outputDirectory;
+        this.resolver=resolver;
+        this.log=log;
         xslToCompile = new HashMap<>();
         errors = new ArrayList<>();
     }
@@ -63,12 +79,29 @@ public class GauloisConfigScanner extends DefaultHandler2 {
         if(GAULOIS_NS.equals(uri) && "xslt".equals(localName)) {
             String href = attributes.getValue("href");
             if(!href.startsWith("cp:/")) {
-                hasError = true;
-                if(uriErrorCount<10) {
-                    errors.add(href+" is an invalid URI. Only URI based on cp:/ protocol are supported");
-                    uriErrorCount++;
+                try {
+                    Source source = resolver.resolve(href, "");
+                    log.debug("source is a "+source.getClass().getName());
+                    String systemId = source.getSystemId();
+                    String xslPath = systemId.contains("!") ? systemId.substring(systemId.indexOf("!")+1) : systemId;
+                    log.debug("xslPath="+xslPath);
+                    String shortPath = FilenameUtils.getPath(xslPath);
+                    log.debug("shortPath="+shortPath);
+                    String baseName = FilenameUtils.getBaseName(xslPath);
+                    log.debug("baseName="+baseName);
+                    String targetPath = shortPath.concat(baseName).concat(".sef");
+                    log.debug("targetPath="+targetPath);
+                    File targetXsl = new File(outputDirectory, targetPath);
+                    
+                    xslToCompile.put(source, targetXsl);
+                } catch(TransformerException | NullPointerException ex) {
+                    hasError = true;
+                    if(uriErrorCount<10) {
+                        errors.add(href+" is an invalid URI. Only URI based on cp:/ protocol are supported, or the one that can be resolved via the catalog");
+                        uriErrorCount++;
+                    }
                 }
-            } else {
+            } else if(href.startsWith("cp:/")) {
                 String path = href.substring(4);
                 boolean found = false;
                 for(File dir:xslDirectories) {
@@ -78,8 +111,13 @@ public class GauloisConfigScanner extends DefaultHandler2 {
                         String baseName = FilenameUtils.getBaseName(path);
                         String targetPath = shortPath.concat(baseName).concat(".sef");
                         File targetXsl = new File(outputDirectory, targetPath);
-                        xslToCompile.put(xsl, targetXsl);
-                        found = true;
+                        try {
+                            xslToCompile.put(new SAXSource(new InputSource(new FileInputStream(xsl))), targetXsl);
+                            found = true;
+                        } catch(FileNotFoundException ex) {
+                            // is it really possible ? We have checked xsl.exists()
+                            // so ignore it
+                        }
                     }
                     if(found) break;
                 }
@@ -89,6 +127,6 @@ public class GauloisConfigScanner extends DefaultHandler2 {
     
     public boolean hasErrors() { return hasError; }
     public List<String> getErrorMessages() { return errors; }
-    public Map<File,File> getXslToCompile() { return xslToCompile; }
+    public Map<Source,File> getXslToCompile() { return xslToCompile; }
     
 }
