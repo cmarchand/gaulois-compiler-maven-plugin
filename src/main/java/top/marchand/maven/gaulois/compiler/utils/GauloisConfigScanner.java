@@ -78,6 +78,7 @@ public class GauloisConfigScanner extends DefaultHandler2 {
         super.startElement(uri, localName, qName, attributes);
         if(GAULOIS_NS.equals(uri) && "xslt".equals(localName)) {
             String href = attributes.getValue("href");
+            log.debug("found XSL: "+href);
             if(!href.startsWith("cp:/")) {
                 try {
                     Source source = resolver.resolve(href, "");
@@ -103,16 +104,23 @@ public class GauloisConfigScanner extends DefaultHandler2 {
                 }
             } else if(href.startsWith("cp:/")) {
                 String path = href.substring(4);
+                log.debug("searching for xsl "+path);
                 boolean found = false;
                 for(File dir:xslDirectories) {
                     File xsl = new File(dir, path);
                     if(xsl.exists() && xsl.isFile()) {
+                        log.debug("\tfound at "+xsl.getAbsolutePath());
                         String shortPath = FilenameUtils.getPath(path);
                         String baseName = FilenameUtils.getBaseName(path);
                         String targetPath = shortPath.concat(baseName).concat(".sef");
                         File targetXsl = new File(outputDirectory, targetPath);
                         try {
-                            xslToCompile.put(new SAXSource(new InputSource(new FileInputStream(xsl))), targetXsl);
+                            InputSource is = new InputSource(new FileInputStream(xsl));
+                            String systemID = xsl.toURI().toString();
+                            is.setPublicId(systemID);
+                            SAXSource ss = new SAXSource(is);
+                            ss.setSystemId(systemID);
+                            xslToCompile.put(ss, targetXsl);
                             found = true;
                         } catch(FileNotFoundException ex) {
                             // is it really possible ? We have checked xsl.exists()

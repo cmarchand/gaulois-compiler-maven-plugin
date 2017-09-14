@@ -121,10 +121,10 @@ public class GCMojo extends AbstractCompiler {
         if(!hasError) {
             for(Source xslSource: xslToCompile.keySet()) {
                 try {
-                    getLog().debug("compiling "+xslSource.getSystemId());
+                    getLog().debug(LOG_PREFIX+" compiling "+xslSource.getSystemId());
                     compileFile(xslSource, xslToCompile.get(xslSource));
                 } catch (FileNotFoundException | SaxonApiException ex) {
-                    getLog().warn("while compiling "+xslSource.getSystemId(), ex);
+                    getLog().warn(LOG_PREFIX+" while compiling "+xslSource.getSystemId(), ex);
                     hasError = true;
                 }
             }
@@ -132,7 +132,7 @@ public class GCMojo extends AbstractCompiler {
             try {
                 gauloisCompilerXsl = getXsltCompiler().compile(xsl);
                 for(File gSrc: gauloisConfigToCompile.keySet()) {
-                    getLog().debug("compiling "+gSrc.getAbsolutePath());
+                    getLog().debug(LOG_PREFIX+" compiling "+gSrc.getAbsolutePath());
                     compileGaulois(gSrc, gauloisConfigToCompile.get(gSrc));
                 }
             } catch(Exception ex) {

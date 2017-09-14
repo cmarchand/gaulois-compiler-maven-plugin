@@ -8,7 +8,7 @@
     
     <groupId>top.marchand.xml.maven</groupId>
     <artifactId>gaulois-compiler-maven-plugin</artifactId>
-    <version>1.0.0-RC2</version>
+    <version>1.0.0-RC3-SNAPSHOT</version>
     <packaging>maven-plugin</packaging>
     
     <name>Gaulois Compiler</name>
