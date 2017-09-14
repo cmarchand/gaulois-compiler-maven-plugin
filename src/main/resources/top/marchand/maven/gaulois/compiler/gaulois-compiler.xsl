@@ -4,6 +4,7 @@
   xmlns:math="http://www.w3.org/2005/xpath-functions/math"
   xmlns:xd="http://www.oxygenxml.com/ns/doc/xsl"
   xmlns:gc="http://efl.fr/chaine/saxon-pipe/config"
+  xmlns:saxon="http://saxon.sf.net/"
   exclude-result-prefixes="#all"
   version="3.0">
   <xd:doc scope="stylesheet">
@@ -14,6 +15,11 @@
     </xd:desc>
   </xd:doc>
   
+  <xsl:output saxon:indent-spaces="2" indent="yes"/>
+  
+  <xd:doc>
+    <xd:desc>Une simple recopie</xd:desc>
+  </xd:doc>
   <xsl:template match="@* | node()">
     <xsl:copy>
       <xsl:apply-templates select="@* | node()"/>
@@ -26,8 +32,11 @@
     </xd:desc>
   </xd:doc>
   <xsl:template match="gc:xslt/@href">
+    <!-- changement de l'extension -->
     <xsl:variable name="newName" as="xs:string" select="string-join((tokenize(.,'\.')[position() lt last()],'sef'),'.')"/>
-    <xsl:attribute name="{name(.)}" select="$newName"></xsl:attribute>
+    <!-- changement du protocole, on va tout packager ensemble -->
+    <xsl:variable name="newName2" as="xs:string" select="concat('cp:',substring-after($newName,':'))"/>
+    <xsl:attribute name="{name(.)}" select="$newName2"></xsl:attribute>
   </xsl:template>
   
 </xsl:stylesheet>
