@@ -1,17 +1,18 @@
 <?xml version="1.0"?>
-<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-  xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
 
   <groupId>top.marchand.xml.maven</groupId>
   <artifactId>gaulois-compiler-maven-plugin</artifactId>
-  <version>1.0.0-RC3</version>
+  <version>1.0.0-RC4</version>
   <packaging>maven-plugin</packaging>
 
   <name>Gaulois Compiler</name>
 
   <description>A maven plugin to compile gaulois-pipe config files and XSLT</description>
+
   <inceptionYear>2017</inceptionYear>
+
   <url>https://github.com/cmarchand/gaulois-compiler-maven-plugin</url>
 
   <licenses>
@@ -49,6 +50,12 @@
   </properties>
 
   <dependencies>
+    <dependency>
+      <groupId>junit</groupId>
+      <artifactId>junit</artifactId>
+      <version>4.12</version>
+      <scope>test</scope>
+    </dependency>
     <dependency>
       <groupId>org.apache.maven</groupId>
       <artifactId>maven-project</artifactId>
@@ -100,29 +107,6 @@
           <target>1.7</target>
         </configuration>
       </plugin>
-      <!--plugin>
-                <groupId>io.xspec.maven</groupId>
-                <artifactId>xspec-maven-plugin</artifactId>
-                <version>1.5.1-RC2</version>
-                <dependencies>
-                    <dependency>
-                        <groupId>net.sf.saxon</groupId>
-                        <artifactId>Saxon-HE</artifactId>
-                        <version>9.7.0-20</version>
-                    </dependency>
-                </dependencies>
-                <configuration>
-                    <generateSurefireReport>true</generateSurefireReport>
-                </configuration>
-                <executions>
-                    <execution>
-                        <phase>test</phase>
-                        <goals>
-                            <goal>run-xspec</goal>
-                        </goals>
-                    </execution>
-                </executions>
-            </plugin-->
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-source-plugin</artifactId>
@@ -153,17 +137,6 @@
       </plugin>
     </plugins>
   </build>
-
-  <distributionManagement>
-    <snapshotRepository>
-      <id>ossrh</id>
-      <url>https://oss.sonatype.org/content/repositories/snapshots</url>
-    </snapshotRepository>
-    <repository>
-      <id>ossrh</id>
-      <url>https://oss.sonatype.org/service/local/staging/deploy/maven2/</url>
-    </repository>
-  </distributionManagement>
 
   <profiles>
     <profile>
