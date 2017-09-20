@@ -105,9 +105,11 @@ public class GCMojo extends AbstractCompiler {
         Map<Source,File> xslToCompile = new HashMap<>();
         getLog().debug(LOG_PREFIX+" looking for gaulois-pipe config files");
         for(FileSet fs: gauloisPipeFilesets) {
+            List<Path> pathes = fs.getFiles(projectBaseDir, log);
+            // this must be call <strong>after</strong> the call to fs.getFiles, as fs.dir is modified by fs.getFiles
             Path basedir = new File(fs.getDir()).toPath();
             getLog().debug("looking in "+basedir.toString());
-            for(Path p: fs.getFiles(log)) {
+            for(Path p: pathes) {
                 getLog().debug("found "+p.toString());
                 File sourceFile = basedir.resolve(p).toFile();
                 Path targetPath = p.getParent()==null ? targetDir : targetDir.resolve(p.getParent());
@@ -173,7 +175,7 @@ public class GCMojo extends AbstractCompiler {
                     scanner.startElement(uri, localName, qName, atts);
                 }
             };
-            filter.parse(sourceFile.getAbsolutePath());
+            filter.parse(sourceFile.toURI().toString());
             if(scanner.hasErrors()) {
                 for(String errorMsg: scanner.getErrorMessages()) {
                     getLog().error(errorMsg);

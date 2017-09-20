@@ -28,13 +28,14 @@ package top.marchand.maven.gaulois.compiler;
 
 import java.util.Arrays;
 import java.util.List;
+import org.apache.maven.plugin.logging.Log;
 
 /**
  * Overwrite getDefaultIncludes to scan .xml files
  * @author <a href="mailto:christophe@marchand.top">Christophe Marchand</a>
  */
 public class FileSet extends top.marchand.xml.maven.plugin.xsl.FileSet {
-    
+        
     public static List<String> getDefaultIncludes() {
         return Arrays.asList(new String[] {"*.xml", "**/*.xml"});
     }
