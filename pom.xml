@@ -4,7 +4,7 @@
 
   <groupId>top.marchand.xml.maven</groupId>
   <artifactId>gaulois-compiler-maven-plugin</artifactId>
-  <version>1.0.0-RC5</version>
+  <version>1.0.0-RC6</version>
   <packaging>maven-plugin</packaging>
 
   <name>Gaulois Compiler</name>
@@ -67,6 +67,16 @@
       <version>${maven.plugin-plugin.version}</version>
       <scope>provided</scope>
     </dependency>
+        <!--dependency>
+            <groupId>org.apache.maven.shared</groupId>
+            <artifactId>maven-dependency-analyzer</artifactId>
+            <version>1.6</version>
+        </dependency-->
+        <!--dependency>
+            <groupId>org.apache.maven.shared</groupId>
+            <artifactId>maven-dependency-tree</artifactId>
+            <version>2.2</version>
+        </dependency-->
     <dependency>
       <groupId>org.slf4j</groupId>
       <artifactId>slf4j-api</artifactId>
@@ -80,7 +90,7 @@
     <dependency>
       <groupId>top.marchand.xml.maven</groupId>
       <artifactId>xslcompiler-maven-plugin</artifactId>
-      <version>1.0.0-RC6</version>
+      <version>1.0.0-RC7</version>
     </dependency>
     <dependency>
       <groupId>net.sf.saxon</groupId>
