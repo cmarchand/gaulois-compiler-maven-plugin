@@ -46,12 +46,15 @@ import net.sf.saxon.s9api.Serializer;
 import net.sf.saxon.s9api.XdmNode;
 import net.sf.saxon.s9api.XsltExecutable;
 import net.sf.saxon.s9api.XsltTransformer;
+import org.apache.maven.artifact.DependencyResolutionRequiredException;
 import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugin.MojoFailureException;
 import org.apache.maven.plugin.logging.Log;
 import org.apache.maven.plugins.annotations.LifecyclePhase;
 import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
+import org.apache.maven.plugins.annotations.ResolutionScope;
+import org.apache.maven.project.MavenProject;
 import org.xml.sax.Attributes;
 import org.xml.sax.InputSource;
 import org.xml.sax.SAXException;
@@ -62,7 +65,7 @@ import org.xml.sax.helpers.XMLFilterImpl;
 import top.marchand.maven.gaulois.compiler.utils.GauloisConfigScanner;
 import top.marchand.xml.maven.plugin.xsl.AbstractCompiler;
 
-@Mojo(name="gaulois-compiler", defaultPhase = LifecyclePhase.COMPILE)
+@Mojo(name="gaulois-compiler", defaultPhase = LifecyclePhase.COMPILE, requiresDependencyResolution = ResolutionScope.COMPILE)
 public class GCMojo extends AbstractCompiler {
     
     /**
@@ -81,6 +84,9 @@ public class GCMojo extends AbstractCompiler {
     @Parameter(defaultValue = "${project.basedir}")
     private File projectBaseDir;
     
+    @Parameter( defaultValue = "${project}", readonly = true, required = true )
+    private MavenProject project;
+
     private XsltExecutable gauloisCompilerXsl;
     
     /**
@@ -90,6 +96,7 @@ public class GCMojo extends AbstractCompiler {
     List<File> xslSourceDirs;
     
     public static final SAXParserFactory PARSER_FACTORY = SAXParserFactory.newInstance();
+    private ArrayList<String> classpaths;
 
     @Override
     public void execute() throws MojoExecutionException, MojoFailureException {
@@ -103,6 +110,7 @@ public class GCMojo extends AbstractCompiler {
         }
         Log log = getLog();
         initSaxon();
+        loadClasspath();
         Path targetDir = classesDirectory.toPath();
         boolean hasError = false;
         Map<Source,File> gauloisConfigToCompile = new HashMap<>();
@@ -113,13 +121,16 @@ public class GCMojo extends AbstractCompiler {
                 try {
                     Source source = compiler.getURIResolver().resolve(fs.getUri(), null);
                     String sPath = fs.getUriPath();
-                    Path targetPath = targetDir.resolve(sPath);
+                    getLog().debug(LOG_PREFIX+" sPath="+sPath);
+                    Path targetPath = targetDir.resolve(sPath).getParent();
+                    getLog().debug(LOG_PREFIX+" targetPath="+targetPath.toString());
                     String sourceFileName = sPath.substring(sPath.lastIndexOf("/")+1);
                     if(sourceFileName.contains("?")) {
                         sourceFileName = sourceFileName.substring(0, sourceFileName.indexOf("?")-1);
                     }
                     // we keep the same extension for gaulois config files
                     File targetFile = targetPath.resolve(sourceFileName).toFile();
+                    getLog().debug(LOG_PREFIX+" targetFile="+targetFile.getAbsolutePath());
                     hasError |= scanGauloisFile(source, targetFile, gauloisConfigToCompile, xslToCompile, targetDir);
                 } catch(TransformerException ex) {
                     hasError = true;
@@ -191,39 +202,15 @@ public class GCMojo extends AbstractCompiler {
      * @param xslToCompile The Map to store all XSL to compile
      * @param targetDir The build dir
      * @return <tt>true</tt> if an error occured
+     * @throws java.io.FileNotFoundException If a file is not found. Should never be thrown.
      */
     protected boolean scanGauloisFile(File sourceFile, File targetFile, Map<Source, File> gauloisConfigToCompile, Map<Source, File> xslToCompile, Path targetDir) throws FileNotFoundException {
-//        try {
-//            final XMLReader reader = new ParserAdapter(PARSER_FACTORY.newSAXParser().getParser());
-//            final GauloisConfigScanner scanner = new GauloisConfigScanner(xslSourceDirs, classesDirectory, getUriResolver(), getLog());
-//            XMLFilter filter = new XMLFilterImpl(reader) {
-//                @Override
-//                public void startElement(String uri, String localName, String qName, Attributes atts) throws SAXException {
-//                    super.startElement(uri, localName, qName, atts);
-//                    scanner.startElement(uri, localName, qName, atts);
-//                }
-//            };
-//            filter.parse(sourceFile.toURI().toString());
-//            if(scanner.hasErrors()) {
-//                for(String errorMsg: scanner.getErrorMessages()) {
-//                    getLog().error(errorMsg);
-//                }
-//            } else {
-//                xslToCompile.putAll(scanner.getXslToCompile());
-//                Source source = new SAXSource(new InputSource(new FileInputStream(sourceFile)));
-//                gauloisConfigToCompile.put(source, targetFile);
-//            }
-//            return scanner.hasErrors();
-//        } catch(ParserConfigurationException | SAXException | IOException ex) {
-//            getLog().error("while scanning "+sourceFile.getAbsolutePath(), ex);
-//            return true;
-//        }
         return scanGauloisFile(new SAXSource(new InputSource(new FileInputStream(sourceFile))), targetFile, gauloisConfigToCompile, xslToCompile, targetDir);
     }
     protected boolean scanGauloisFile(Source source, File targetFile, Map<Source, File> gauloisConfigToCompile, Map<Source, File> xslToCompile, Path targetDir) {
         try {
             final XMLReader reader = new ParserAdapter(PARSER_FACTORY.newSAXParser().getParser());
-            final GauloisConfigScanner scanner = new GauloisConfigScanner(xslSourceDirs, classesDirectory, getUriResolver(), getLog());
+            final GauloisConfigScanner scanner = new GauloisConfigScanner(xslSourceDirs, classesDirectory, getUriResolver(), getLog(), classpaths);
             XMLFilter filter = new XMLFilterImpl(reader) {
                 @Override
                 public void startElement(String uri, String localName, String qName, Attributes atts) throws SAXException {
@@ -255,5 +242,18 @@ public class GCMojo extends AbstractCompiler {
         tr.setInitialContextNode(sourceNode);
         tr.transform();
         tr.close();
+    }
+
+    private void loadClasspath() {
+        try {
+            classpaths = new ArrayList<>(project.getCompileClasspathElements().size());
+            for(Object i:project.getCompileClasspathElements()) {
+                File f = new File(i.toString());
+                classpaths.add(f.toURI().toString());
+            }
+            getLog().debug(LOG_PREFIX+"classpaths="+classpaths);
+        } catch(DependencyResolutionRequiredException ex) {
+            getLog().error(LOG_PREFIX+ex.getMessage(),ex);
+        }
     }
 }
