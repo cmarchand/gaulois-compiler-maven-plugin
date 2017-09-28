@@ -28,7 +28,6 @@ package top.marchand.maven.gaulois.compiler;
 
 import java.util.Arrays;
 import java.util.List;
-import org.apache.maven.plugin.logging.Log;
 
 /**
  * Overwrite getDefaultIncludes to scan .xml files

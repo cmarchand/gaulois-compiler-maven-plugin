@@ -27,6 +27,7 @@
 package top.marchand.maven.gaulois.compiler;
 
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.nio.file.Path;
@@ -37,6 +38,8 @@ import java.util.Map;
 import javax.xml.parsers.ParserConfigurationException;
 import javax.xml.parsers.SAXParserFactory;
 import javax.xml.transform.Source;
+import javax.xml.transform.TransformerException;
+import javax.xml.transform.sax.SAXSource;
 import javax.xml.transform.stream.StreamSource;
 import net.sf.saxon.s9api.SaxonApiException;
 import net.sf.saxon.s9api.Serializer;
@@ -50,6 +53,7 @@ import org.apache.maven.plugins.annotations.LifecyclePhase;
 import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
 import org.xml.sax.Attributes;
+import org.xml.sax.InputSource;
 import org.xml.sax.SAXException;
 import org.xml.sax.XMLFilter;
 import org.xml.sax.XMLReader;
@@ -101,23 +105,47 @@ public class GCMojo extends AbstractCompiler {
         initSaxon();
         Path targetDir = classesDirectory.toPath();
         boolean hasError = false;
-        Map<File,File> gauloisConfigToCompile = new HashMap<>();
+        Map<Source,File> gauloisConfigToCompile = new HashMap<>();
         Map<Source,File> xslToCompile = new HashMap<>();
         getLog().debug(LOG_PREFIX+" looking for gaulois-pipe config files");
         for(FileSet fs: gauloisPipeFilesets) {
-            List<Path> pathes = fs.getFiles(projectBaseDir, log);
-            // this must be call <strong>after</strong> the call to fs.getFiles, as fs.dir is modified by fs.getFiles
-            Path basedir = new File(fs.getDir()).toPath();
-            getLog().debug("looking in "+basedir.toString());
-            for(Path p: pathes) {
-                getLog().debug("found "+p.toString());
-                File sourceFile = basedir.resolve(p).toFile();
-                Path targetPath = p.getParent()==null ? targetDir : targetDir.resolve(p.getParent());
-                String sourceFileName = sourceFile.getName();
-                // we keep the same extension for gaulois config files
-                File targetFile = targetPath.resolve(sourceFileName).toFile();
-                gauloisConfigToCompile.put(sourceFile, targetFile);
-                hasError |= scanGauloisFile(sourceFile, targetFile, gauloisConfigToCompile, xslToCompile, targetDir);
+            if(fs.getUri()!=null) {
+                try {
+                    Source source = compiler.getURIResolver().resolve(fs.getUri(), null);
+                    String sPath = fs.getUriPath();
+                    Path targetPath = targetDir.resolve(sPath);
+                    String sourceFileName = sPath.substring(sPath.lastIndexOf("/")+1);
+                    if(sourceFileName.contains("?")) {
+                        sourceFileName = sourceFileName.substring(0, sourceFileName.indexOf("?")-1);
+                    }
+                    // we keep the same extension for gaulois config files
+                    File targetFile = targetPath.resolve(sourceFileName).toFile();
+                    hasError |= scanGauloisFile(source, targetFile, gauloisConfigToCompile, xslToCompile, targetDir);
+                } catch(TransformerException ex) {
+                    hasError = true;
+                    getLog().error("while parsing "+fs.getUri(), ex);
+                }
+            } else {
+                List<Path> pathes = fs.getFiles(projectBaseDir, log);
+                // this must be call <strong>after</strong> the call to fs.getFiles, as fs.dir is modified by fs.getFiles
+                Path basedir = new File(fs.getDir()).toPath();
+                getLog().debug("looking in "+basedir.toString());
+                for(Path p: pathes) {
+                    getLog().debug("found "+p.toString());
+                    File sourceFile = basedir.resolve(p).toFile();
+                    Path targetPath = p.getParent()==null ? targetDir : targetDir.resolve(p.getParent());
+                    String sourceFileName = sourceFile.getName();
+                    // we keep the same extension for gaulois config files
+                    File targetFile = targetPath.resolve(sourceFileName).toFile();
+//                    gauloisConfigToCompile.put(sourceFile, targetFile);
+                    try {
+                        hasError |= scanGauloisFile(sourceFile, targetFile, gauloisConfigToCompile, xslToCompile, targetDir);
+                    } catch(FileNotFoundException ex) {
+                        // it can not be thrown but we are required to catch it
+                        hasError = true;
+                        getLog().error("while parsing "+p.toString(), ex);
+                    }
+                }
             }
         }
         if(!hasError) {
@@ -133,8 +161,8 @@ public class GCMojo extends AbstractCompiler {
             Source xsl = new StreamSource(this.getClass().getResourceAsStream("/top/marchand/maven/gaulois/compiler/gaulois-compiler.xsl"));
             try {
                 gauloisCompilerXsl = getXsltCompiler().compile(xsl);
-                for(File gSrc: gauloisConfigToCompile.keySet()) {
-                    getLog().debug(LOG_PREFIX+" compiling "+gSrc.getAbsolutePath());
+                for(Source gSrc: gauloisConfigToCompile.keySet()) {
+                    getLog().debug(LOG_PREFIX+" compiling "+gSrc.getSystemId());
                     compileGaulois(gSrc, gauloisConfigToCompile.get(gSrc));
                 }
             } catch(Exception ex) {
@@ -164,7 +192,35 @@ public class GCMojo extends AbstractCompiler {
      * @param targetDir The build dir
      * @return <tt>true</tt> if an error occured
      */
-    protected boolean scanGauloisFile(File sourceFile, File targetFile, Map<File, File> gauloisConfigToCompile, Map<Source, File> xslToCompile, Path targetDir) {
+    protected boolean scanGauloisFile(File sourceFile, File targetFile, Map<Source, File> gauloisConfigToCompile, Map<Source, File> xslToCompile, Path targetDir) throws FileNotFoundException {
+//        try {
+//            final XMLReader reader = new ParserAdapter(PARSER_FACTORY.newSAXParser().getParser());
+//            final GauloisConfigScanner scanner = new GauloisConfigScanner(xslSourceDirs, classesDirectory, getUriResolver(), getLog());
+//            XMLFilter filter = new XMLFilterImpl(reader) {
+//                @Override
+//                public void startElement(String uri, String localName, String qName, Attributes atts) throws SAXException {
+//                    super.startElement(uri, localName, qName, atts);
+//                    scanner.startElement(uri, localName, qName, atts);
+//                }
+//            };
+//            filter.parse(sourceFile.toURI().toString());
+//            if(scanner.hasErrors()) {
+//                for(String errorMsg: scanner.getErrorMessages()) {
+//                    getLog().error(errorMsg);
+//                }
+//            } else {
+//                xslToCompile.putAll(scanner.getXslToCompile());
+//                Source source = new SAXSource(new InputSource(new FileInputStream(sourceFile)));
+//                gauloisConfigToCompile.put(source, targetFile);
+//            }
+//            return scanner.hasErrors();
+//        } catch(ParserConfigurationException | SAXException | IOException ex) {
+//            getLog().error("while scanning "+sourceFile.getAbsolutePath(), ex);
+//            return true;
+//        }
+        return scanGauloisFile(new SAXSource(new InputSource(new FileInputStream(sourceFile))), targetFile, gauloisConfigToCompile, xslToCompile, targetDir);
+    }
+    protected boolean scanGauloisFile(Source source, File targetFile, Map<Source, File> gauloisConfigToCompile, Map<Source, File> xslToCompile, Path targetDir) {
         try {
             final XMLReader reader = new ParserAdapter(PARSER_FACTORY.newSAXParser().getParser());
             final GauloisConfigScanner scanner = new GauloisConfigScanner(xslSourceDirs, classesDirectory, getUriResolver(), getLog());
@@ -175,22 +231,23 @@ public class GCMojo extends AbstractCompiler {
                     scanner.startElement(uri, localName, qName, atts);
                 }
             };
-            filter.parse(sourceFile.toURI().toString());
+            // use systemId to create a new InputSource, and to keep the Source not consumed
+            filter.parse(source.getSystemId());
             if(scanner.hasErrors()) {
                 for(String errorMsg: scanner.getErrorMessages()) {
                     getLog().error(errorMsg);
                 }
             } else {
                 xslToCompile.putAll(scanner.getXslToCompile());
-                gauloisConfigToCompile.put(sourceFile, targetFile);
+                gauloisConfigToCompile.put(source, targetFile);
             }
             return scanner.hasErrors();
         } catch(ParserConfigurationException | SAXException | IOException ex) {
-            getLog().error("while scanning "+sourceFile.getAbsolutePath(), ex);
+            getLog().error("while scanning "+source.getSystemId(), ex);
             return true;
         }
     }
-    protected void compileGaulois(File source, File target) throws SaxonApiException {
+    protected void compileGaulois(Source source, File target) throws SaxonApiException {
         XsltTransformer tr = gauloisCompilerXsl.load();
         Serializer ser = getProcessor().newSerializer(target);
         tr.setDestination(ser);
