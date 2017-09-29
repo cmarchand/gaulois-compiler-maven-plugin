@@ -86,6 +86,14 @@ public class GCMojo extends AbstractCompiler {
     
     @Parameter( defaultValue = "${project}", readonly = true, required = true )
     private MavenProject project;
+    
+    /**
+     * A XSL to post-compile the gaulois-pipe config file
+     */
+    @Parameter()
+    private File postCompiler;
+    
+    private XsltExecutable postCompilerXsl;
 
     private XsltExecutable gauloisCompilerXsl;
     
@@ -236,12 +244,29 @@ public class GCMojo extends AbstractCompiler {
     }
     protected void compileGaulois(Source source, File target) throws SaxonApiException {
         XsltTransformer tr = gauloisCompilerXsl.load();
+        XsltTransformer first = tr;
+        // post compiler ?
+        XsltTransformer pc = getPostCompiler();
+        if(pc!=null) {
+            tr.setDestination(pc);
+            tr = pc;
+        }
         Serializer ser = getProcessor().newSerializer(target);
         tr.setDestination(ser);
         XdmNode sourceNode = getBuilder().build(source);
-        tr.setInitialContextNode(sourceNode);
-        tr.transform();
-        tr.close();
+        first.setInitialContextNode(sourceNode);
+        first.transform();
+        first.close();
+    }
+    protected XsltTransformer getPostCompiler() {
+        if(postCompilerXsl==null && postCompiler!=null && postCompiler.exists() && postCompiler.isFile()) {
+            try {
+                postCompilerXsl = getXsltCompiler().compile(new StreamSource(new FileInputStream(postCompiler)));
+            } catch(SaxonApiException | FileNotFoundException ex) {
+                getLog().error("while compiling post-compiler "+postCompiler.getAbsolutePath(), ex);
+            }
+        }
+        return postCompilerXsl==null ? null : postCompilerXsl.load();
     }
 
     private void loadClasspath() {
