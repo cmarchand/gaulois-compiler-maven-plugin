@@ -4,7 +4,7 @@
 
   <groupId>top.marchand.xml.maven</groupId>
   <artifactId>gaulois-compiler-maven-plugin</artifactId>
-  <version>1.0.0-RC7</version>
+  <version>1.0.0-RC8</version>
   <packaging>maven-plugin</packaging>
 
   <name>Gaulois Compiler</name>
@@ -152,6 +152,18 @@
       </plugin>
     </plugins>
   </build>
+
+  <distributionManagement>
+    <snapshotRepository>
+      <id>ossrh</id>
+      <url>https://oss.sonatype.org/content/repositories/snapshots</url>
+    </snapshotRepository>
+    <repository>
+      <id>ossrh</id>
+      <url>https://oss.sonatype.org/service/local/staging/deploy/maven2/</url>
+    </repository>
+  </distributionManagement>
+
 
   <profiles>
     <profile>

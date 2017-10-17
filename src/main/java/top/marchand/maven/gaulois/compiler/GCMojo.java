@@ -95,7 +95,7 @@ public class GCMojo extends AbstractCompiler {
     @Parameter()
     private File postCompiler;
     
-    @Parameter(name="saxonOptions")
+    @Parameter()
     SaxonOptions saxonOptions;
     
     private XsltExecutable postCompilerXsl;
