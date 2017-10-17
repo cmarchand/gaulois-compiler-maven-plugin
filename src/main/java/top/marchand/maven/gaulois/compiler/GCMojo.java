@@ -46,6 +46,7 @@ import net.sf.saxon.s9api.Serializer;
 import net.sf.saxon.s9api.XdmNode;
 import net.sf.saxon.s9api.XsltExecutable;
 import net.sf.saxon.s9api.XsltTransformer;
+import net.sf.saxon.trans.XPathException;
 import org.apache.maven.artifact.DependencyResolutionRequiredException;
 import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugin.MojoFailureException;
@@ -63,6 +64,7 @@ import org.xml.sax.XMLReader;
 import org.xml.sax.helpers.ParserAdapter;
 import org.xml.sax.helpers.XMLFilterImpl;
 import top.marchand.maven.gaulois.compiler.utils.GauloisConfigScanner;
+import top.marchand.maven.saxon.utils.SaxonOptions;
 import top.marchand.xml.maven.plugin.xsl.AbstractCompiler;
 
 @Mojo(name="gaulois-compiler", defaultPhase = LifecyclePhase.COMPILE, requiresDependencyResolution = ResolutionScope.COMPILE)
@@ -93,6 +95,9 @@ public class GCMojo extends AbstractCompiler {
     @Parameter()
     private File postCompiler;
     
+    @Parameter(name="saxonOptions")
+    SaxonOptions saxonOptions;
+    
     private XsltExecutable postCompilerXsl;
 
     private XsltExecutable gauloisCompilerXsl;
@@ -117,7 +122,11 @@ public class GCMojo extends AbstractCompiler {
             xslSourceDirs.add(new File(projectBaseDir, "src/main/xsl"));
         }
         Log log = getLog();
-        initSaxon();
+        try {
+            initSaxon();
+        } catch(XPathException ex) {
+            getLog().error("while configuring saxon:",ex);
+        }
         loadClasspath();
         Path targetDir = classesDirectory.toPath();
         boolean hasError = false;
@@ -280,5 +289,10 @@ public class GCMojo extends AbstractCompiler {
         } catch(DependencyResolutionRequiredException ex) {
             getLog().error(LOG_PREFIX+ex.getMessage(),ex);
         }
+    }
+
+    @Override
+    public SaxonOptions getSaxonOptions() {
+        return saxonOptions;
     }
 }
