@@ -30,6 +30,7 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.net.MalformedURLException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -92,10 +93,10 @@ public class GCMojo extends AbstractCompiler {
     /**
      * A XSL to post-compile the gaulois-pipe config file
      */
-    @Parameter()
+    @Parameter
     private File postCompiler;
     
-    @Parameter()
+    @Parameter
     SaxonOptions saxonOptions;
     
     private XsltExecutable postCompilerXsl;
@@ -134,7 +135,7 @@ public class GCMojo extends AbstractCompiler {
         Map<Source,File> xslToCompile = new HashMap<>();
         getLog().debug(LOG_PREFIX+" looking for gaulois-pipe config files");
         for(FileSet fs: gauloisPipeFilesets) {
-            if(fs.getUri()!=null) {
+            if(fs.getUri()!=null && !fs.getUri().isEmpty()) {
                 try {
                     Source source = compiler.getURIResolver().resolve(fs.getUri(), null);
                     String sPath = fs.getUriPath();
@@ -222,7 +223,13 @@ public class GCMojo extends AbstractCompiler {
      * @throws java.io.FileNotFoundException If a file is not found. Should never be thrown.
      */
     protected boolean scanGauloisFile(File sourceFile, File targetFile, Map<Source, File> gauloisConfigToCompile, Map<Source, File> xslToCompile, Path targetDir) throws FileNotFoundException {
-        return scanGauloisFile(new SAXSource(new InputSource(new FileInputStream(sourceFile))), targetFile, gauloisConfigToCompile, xslToCompile, targetDir);
+        SAXSource sSource = new SAXSource(new InputSource(new FileInputStream(sourceFile)));
+        try {
+            sSource.setSystemId(sourceFile.toURI().toURL().toString());
+            return scanGauloisFile(sSource, targetFile, gauloisConfigToCompile, xslToCompile, targetDir);
+        } catch(MalformedURLException ex) {
+            return false;
+        }
     }
     protected boolean scanGauloisFile(Source source, File targetFile, Map<Source, File> gauloisConfigToCompile, Map<Source, File> xslToCompile, Path targetDir) {
         try {

@@ -4,7 +4,7 @@
 
   <groupId>top.marchand.xml.maven</groupId>
   <artifactId>gaulois-compiler-maven-plugin</artifactId>
-  <version>1.0.0-RC8</version>
+  <version>1.0.0-RC10-SNAPSHOT</version>
   <packaging>maven-plugin</packaging>
 
   <name>Gaulois Compiler</name>
@@ -90,7 +90,7 @@
     <dependency>
       <groupId>top.marchand.xml.maven</groupId>
       <artifactId>xslcompiler-maven-plugin</artifactId>
-      <version>1.0.0-RC8</version>
+      <version>1.0.0-RC9</version>
     </dependency>
     <dependency>
       <groupId>net.sf.saxon</groupId>
