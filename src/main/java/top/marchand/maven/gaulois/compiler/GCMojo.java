@@ -31,6 +31,7 @@ import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.net.URL;
+import java.net.MalformedURLException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -54,6 +55,7 @@ import net.sf.saxon.s9api.XdmNode;
 import net.sf.saxon.s9api.XdmSequenceIterator;
 import net.sf.saxon.s9api.XsltExecutable;
 import net.sf.saxon.s9api.XsltTransformer;
+import net.sf.saxon.trans.XPathException;
 import org.apache.maven.artifact.DependencyResolutionRequiredException;
 import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugin.MojoFailureException;
@@ -74,6 +76,7 @@ import org.xml.sax.helpers.XMLFilterImpl;
 import top.marchand.maven.gaulois.compiler.utils.GauloisConfigScanner;
 import top.marchand.maven.gaulois.compiler.utils.GauloisSet;
 import top.marchand.maven.gaulois.compiler.utils.GauloisXsl;
+import top.marchand.maven.saxon.utils.SaxonOptions;
 import top.marchand.xml.maven.plugin.xsl.AbstractCompiler;
 
 @Mojo(name="gaulois-compiler", defaultPhase = LifecyclePhase.COMPILE, requiresDependencyResolution = ResolutionScope.COMPILE)
@@ -104,8 +107,11 @@ public class GCMojo extends AbstractCompiler {
     /**
      * A XSL to post-compile the gaulois-pipe config file, if required
      */
-    @Parameter()
+    @Parameter
     private File postCompiler;
+    
+    @Parameter
+    SaxonOptions saxonOptions;
     
     private XsltExecutable postCompilerXsl;
 
@@ -140,7 +146,11 @@ public class GCMojo extends AbstractCompiler {
             xslSourceDirs.add(new File(projectBaseDir, "src/main/xsl"));
         }
         Log log = getLog();
-        initSaxon();
+        try {
+            initSaxon();
+        } catch(XPathException ex) {
+            getLog().error("while configuring saxon:",ex);
+        }
         loadClasspath();
         gauloisSets = new TreeSet<>();
         foundXsls = new HashMap<>();
@@ -154,7 +164,7 @@ public class GCMojo extends AbstractCompiler {
         boolean hasError = false;
         getLog().debug(LOG_PREFIX+" looking for gaulois-pipe config files");
         for(FileSet fs: gauloisPipeFilesets) {
-            if(fs.getUri()!=null) {
+            if(fs.getUri()!=null && !fs.getUri().isEmpty()) {
                 try {
                     Source source = compiler.getURIResolver().resolve(fs.getUri(), null);
                     String sPath = fs.getUriPath();
@@ -354,5 +364,10 @@ public class GCMojo extends AbstractCompiler {
     private class SchemaTarget {
         private String accessUri;
         private File fileLocation;
+    }
+
+    @Override
+    public SaxonOptions getSaxonOptions() {
+        return saxonOptions;
     }
 }
