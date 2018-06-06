@@ -30,20 +30,28 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.net.URL;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.TreeSet;
 import javax.xml.parsers.ParserConfigurationException;
 import javax.xml.parsers.SAXParserFactory;
 import javax.xml.transform.Source;
 import javax.xml.transform.TransformerException;
 import javax.xml.transform.sax.SAXSource;
 import javax.xml.transform.stream.StreamSource;
+import net.sf.saxon.s9api.Axis;
+import net.sf.saxon.s9api.QName;
 import net.sf.saxon.s9api.SaxonApiException;
 import net.sf.saxon.s9api.Serializer;
+import net.sf.saxon.s9api.XdmAtomicValue;
+import net.sf.saxon.s9api.XdmDestination;
 import net.sf.saxon.s9api.XdmNode;
+import net.sf.saxon.s9api.XdmSequenceIterator;
 import net.sf.saxon.s9api.XsltExecutable;
 import net.sf.saxon.s9api.XsltTransformer;
 import org.apache.maven.artifact.DependencyResolutionRequiredException;
@@ -55,6 +63,7 @@ import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
 import org.apache.maven.plugins.annotations.ResolutionScope;
 import org.apache.maven.project.MavenProject;
+import org.apache.xerces.util.URI;
 import org.xml.sax.Attributes;
 import org.xml.sax.InputSource;
 import org.xml.sax.SAXException;
@@ -63,6 +72,8 @@ import org.xml.sax.XMLReader;
 import org.xml.sax.helpers.ParserAdapter;
 import org.xml.sax.helpers.XMLFilterImpl;
 import top.marchand.maven.gaulois.compiler.utils.GauloisConfigScanner;
+import top.marchand.maven.gaulois.compiler.utils.GauloisSet;
+import top.marchand.maven.gaulois.compiler.utils.GauloisXsl;
 import top.marchand.xml.maven.plugin.xsl.AbstractCompiler;
 
 @Mojo(name="gaulois-compiler", defaultPhase = LifecyclePhase.COMPILE, requiresDependencyResolution = ResolutionScope.COMPILE)
@@ -75,6 +86,9 @@ public class GCMojo extends AbstractCompiler {
     @Parameter( defaultValue = "${project.build.outputDirectory}" )
     private File classesDirectory;
     
+    /**
+     * List of gauloisPipeFileset
+     */
     @Parameter
     List<FileSet> gauloisPipeFilesets;
     
@@ -88,7 +102,7 @@ public class GCMojo extends AbstractCompiler {
     private MavenProject project;
     
     /**
-     * A XSL to post-compile the gaulois-pipe config file
+     * A XSL to post-compile the gaulois-pipe config file, if required
      */
     @Parameter()
     private File postCompiler;
@@ -96,6 +110,7 @@ public class GCMojo extends AbstractCompiler {
     private XsltExecutable postCompilerXsl;
 
     private XsltExecutable gauloisCompilerXsl;
+    private XsltExecutable xutScanner;
     
     /**
      * The list of directories where XSL sources are located in
@@ -103,8 +118,16 @@ public class GCMojo extends AbstractCompiler {
     @Parameter
     List<File> xslSourceDirs;
     
+    // inner working variables
+    private Set<GauloisSet> gauloisSets;
+    private Map<String, GauloisXsl> foundXsls;
+    
     public static final SAXParserFactory PARSER_FACTORY = SAXParserFactory.newInstance();
     private ArrayList<String> classpaths;
+    private static final String XUT_NS = "https://github.com/mricaud/xml-utilities";
+    private static final QName QN_DEP_TYPE = new QName("dependency-type");
+    private static final QName QN_URI = new QName("uri");
+    private static final QName QN_ABS_URI = new QName("abs-uri");
 
     @Override
     public void execute() throws MojoExecutionException, MojoFailureException {
@@ -119,10 +142,16 @@ public class GCMojo extends AbstractCompiler {
         Log log = getLog();
         initSaxon();
         loadClasspath();
+        gauloisSets = new TreeSet<>();
+        foundXsls = new HashMap<>();
+        try {
+            URL url = getClass().getResource("/org/mricuad/xml-utilities/get-xml-file-static-dependency-tree.xsl");
+            xutScanner = getXsltCompiler().compile(new StreamSource(url.openStream()));
+        } catch(SaxonApiException | IOException ex) {
+            throw new MojoFailureException("while compiling xut xsl", ex);
+        }
         Path targetDir = classesDirectory.toPath();
         boolean hasError = false;
-        Map<Source,File> gauloisConfigToCompile = new HashMap<>();
-        Map<Source,File> xslToCompile = new HashMap<>();
         getLog().debug(LOG_PREFIX+" looking for gaulois-pipe config files");
         for(FileSet fs: gauloisPipeFilesets) {
             if(fs.getUri()!=null) {
@@ -139,7 +168,7 @@ public class GCMojo extends AbstractCompiler {
                     // we keep the same extension for gaulois config files
                     File targetFile = targetPath.resolve(sourceFileName).toFile();
                     getLog().debug(LOG_PREFIX+" targetFile="+targetFile.getAbsolutePath());
-                    hasError |= scanGauloisFile(source, targetFile, gauloisConfigToCompile, xslToCompile, targetDir);
+                    hasError |= scanGauloisFile(source, targetFile, targetDir);
                 } catch(TransformerException ex) {
                     hasError = true;
                     getLog().error("while parsing "+fs.getUri(), ex);
@@ -158,7 +187,7 @@ public class GCMojo extends AbstractCompiler {
                     File targetFile = targetPath.resolve(sourceFileName).toFile();
 //                    gauloisConfigToCompile.put(sourceFile, targetFile);
                     try {
-                        hasError |= scanGauloisFile(sourceFile, targetFile, gauloisConfigToCompile, xslToCompile, targetDir);
+                        hasError |= scanGauloisFile(sourceFile, targetFile, targetDir);
                     } catch(FileNotFoundException ex) {
                         // it can not be thrown but we are required to catch it
                         hasError = true;
@@ -168,21 +197,25 @@ public class GCMojo extends AbstractCompiler {
             }
         }
         if(!hasError) {
-            for(Source xslSource: xslToCompile.keySet()) {
+            for(String xslSystemId: foundXsls.keySet()) {
                 try {
-                    getLog().debug(LOG_PREFIX+" compiling "+xslSource.getSystemId());
-                    compileFile(xslSource, xslToCompile.get(xslSource));
+                    getLog().debug(LOG_PREFIX+" compiling "+xslSystemId);
+                    Source xslSource = new StreamSource(xslSystemId);
+                    File targetFile = foundXsls.get(xslSystemId).getTargetFile();
+                    compileFile(xslSource, targetFile);
+                    // ici, scanner la XSL pour détecter des xsl:import-schema
                 } catch (FileNotFoundException | SaxonApiException ex) {
-                    getLog().warn(LOG_PREFIX+" while compiling "+xslSource.getSystemId(), ex);
+                    getLog().warn(LOG_PREFIX+" while compiling "+xslSystemId, ex);
                     hasError = true;
                 }
             }
             Source xsl = new StreamSource(this.getClass().getResourceAsStream("/top/marchand/maven/gaulois/compiler/gaulois-compiler.xsl"));
             try {
                 gauloisCompilerXsl = getXsltCompiler().compile(xsl);
-                for(Source gSrc: gauloisConfigToCompile.keySet()) {
-                    getLog().debug(LOG_PREFIX+" compiling "+gSrc.getSystemId());
-                    compileGaulois(gSrc, gauloisConfigToCompile.get(gSrc));
+                for(GauloisSet gs: gauloisSets) {
+                    getLog().debug(LOG_PREFIX+" compiling "+gs.getGauloisConfigSystemId());
+                    // passer ici les schemas à déclarer
+                    compileGaulois(new StreamSource(gs.getGauloisConfigSystemId()), gs.getTargetFile(), gs.getAllSchemas());
                 }
             } catch(Exception ex) {
                 hasError = true;
@@ -206,16 +239,14 @@ public class GCMojo extends AbstractCompiler {
      * Else, the whole gaulois-pipe config file is ignored.
      * @param sourceFile The file to scan. It <strong>MUST</strong> be a gaulois config file.
      * @param targetFile The target file where scanned file will be stored.
-     * @param gauloisConfigToCompile The Map to store all gaulois config file to compile
-     * @param xslToCompile The Map to store all XSL to compile
      * @param targetDir The build dir
-     * @return <tt>true</tt> if an error occured
+     * @return <tt>false</tt> if an error occured
      * @throws java.io.FileNotFoundException If a file is not found. Should never be thrown.
      */
-    protected boolean scanGauloisFile(File sourceFile, File targetFile, Map<Source, File> gauloisConfigToCompile, Map<Source, File> xslToCompile, Path targetDir) throws FileNotFoundException {
-        return scanGauloisFile(new SAXSource(new InputSource(new FileInputStream(sourceFile))), targetFile, gauloisConfigToCompile, xslToCompile, targetDir);
+    protected boolean scanGauloisFile(File sourceFile, File targetFile, Path targetDir) throws FileNotFoundException {
+        return scanGauloisFile(new SAXSource(new InputSource(new FileInputStream(sourceFile))), targetFile, targetDir);
     }
-    protected boolean scanGauloisFile(Source source, File targetFile, Map<Source, File> gauloisConfigToCompile, Map<Source, File> xslToCompile, Path targetDir) {
+    protected boolean scanGauloisFile(Source source, File targetFile, Path targetDir) {
         try {
             final XMLReader reader = new ParserAdapter(PARSER_FACTORY.newSAXParser().getParser());
             final GauloisConfigScanner scanner = new GauloisConfigScanner(xslSourceDirs, classesDirectory, getUriResolver(), getLog(), classpaths);
@@ -233,17 +264,29 @@ public class GCMojo extends AbstractCompiler {
                     getLog().error(errorMsg);
                 }
             } else {
-                xslToCompile.putAll(scanner.getXslToCompile());
-                gauloisConfigToCompile.put(source, targetFile);
+                GauloisSet set = new GauloisSet(source.getSystemId(), targetFile);
+                if(!gauloisSets.contains(set)) {
+                    gauloisSets.add(set);
+                    for(Source xslSource: scanner.getXslToCompile().keySet()) {
+                        GauloisXsl xsl = foundXsls.get(xslSource.getSystemId());
+                        if(xsl==null) {
+                            xsl = new GauloisXsl(xslSource.getSystemId(), scanner.getXslToCompile().get(xslSource));
+                            foundXsls.put(xslSource.getSystemId(), xsl);
+                            scanForSchemas(xsl);
+                        }
+                        set.getXsls().add(xsl);
+                    }
+                }
             }
             return scanner.hasErrors();
-        } catch(ParserConfigurationException | SAXException | IOException ex) {
+        } catch(ParserConfigurationException | SAXException | SaxonApiException | IOException ex) {
             getLog().error("while scanning "+source.getSystemId(), ex);
             return true;
         }
     }
-    protected void compileGaulois(Source source, File target) throws SaxonApiException {
+    protected void compileGaulois(Source source, File target, Set<String> schemas) throws SaxonApiException {
         XsltTransformer tr = gauloisCompilerXsl.load();
+        // TODO: set parameter for schemas
         XsltTransformer first = tr;
         // post compiler ?
         XsltTransformer pc = getPostCompiler();
@@ -268,7 +311,34 @@ public class GCMojo extends AbstractCompiler {
         }
         return postCompilerXsl==null ? null : postCompilerXsl.load();
     }
-
+    protected void scanForSchemas(GauloisXsl xsl) throws SaxonApiException {
+        XsltTransformer xut = xutScanner.load();
+        XdmDestination dest = new XdmDestination();
+        xut.setDestination(dest);
+        XdmNode xslDocument = getBuilder().build(new StreamSource(xsl.getXslSystemId()));
+        xut.setInitialContextNode(xslDocument);
+        xut.setParameter(new QName(XUT_NS, "xut:get-xml-file-static-dependency-tree.filterDuplicatedDependencies"), new XdmAtomicValue(true));
+        xut.transform();
+        XdmNode dependencies = dest.getXdmNode();
+        // now, walk through dependencies
+        XdmNode file = (XdmNode)(dependencies.axisIterator(Axis.CHILD).next());
+        XdmSequenceIterator xsi = file.axisIterator(Axis.CHILD);
+        while(xsi.hasNext()) {
+            exploreFile(xsl, (XdmNode)(xsi.next()), xsl.getXslSystemId(), xsl.getTargetFile());
+        }
+    }
+    private void exploreFile(GauloisXsl xsl, XdmNode node, String baseUri, File targetParentFile) {
+        String dependencyType = node.getAttributeValue(QN_DEP_TYPE);
+        if(dependencyType.equals("xsl:import-schema")) {
+            String uri = node.getAttributeValue(QN_URI);
+            String absUri = node.getAttributeValue(QN_ABS_URI);
+            SchemaTarget targetSchema = getTargetSchemaFile(targetParentFile, uri, absUri);
+        }
+    }
+    private SchemaTarget getTargetSchemaFile(File targetParentFile, String uri, String absUri) {
+        // TODO
+        return null;
+    }
     private void loadClasspath() {
         try {
             classpaths = new ArrayList<>(project.getCompileClasspathElements().size());
@@ -280,5 +350,9 @@ public class GCMojo extends AbstractCompiler {
         } catch(DependencyResolutionRequiredException ex) {
             getLog().error(LOG_PREFIX+ex.getMessage(),ex);
         }
+    }
+    private class SchemaTarget {
+        private String accessUri;
+        private File fileLocation;
     }
 }
