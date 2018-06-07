@@ -29,9 +29,18 @@ package top.marchand.maven.gaulois.compiler;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
 import java.io.IOException;
-import java.net.URL;
+import java.io.InputStream;
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.net.MalformedURLException;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.net.URL;
+import java.nio.channels.Channels;
+import java.nio.channels.FileChannel;
+import java.nio.channels.ReadableByteChannel;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -39,20 +48,28 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 import javax.xml.parsers.ParserConfigurationException;
 import javax.xml.parsers.SAXParserFactory;
 import javax.xml.transform.Source;
+import javax.xml.transform.SourceLocator;
 import javax.xml.transform.TransformerException;
+import javax.xml.transform.URIResolver;
 import javax.xml.transform.sax.SAXSource;
 import javax.xml.transform.stream.StreamSource;
 import net.sf.saxon.s9api.Axis;
+import net.sf.saxon.s9api.Destination;
+import net.sf.saxon.s9api.MessageListener;
 import net.sf.saxon.s9api.QName;
 import net.sf.saxon.s9api.SaxonApiException;
 import net.sf.saxon.s9api.Serializer;
+import net.sf.saxon.s9api.TeeDestination;
 import net.sf.saxon.s9api.XdmAtomicValue;
 import net.sf.saxon.s9api.XdmDestination;
 import net.sf.saxon.s9api.XdmNode;
 import net.sf.saxon.s9api.XdmSequenceIterator;
+import net.sf.saxon.s9api.XdmValue;
 import net.sf.saxon.s9api.XsltExecutable;
 import net.sf.saxon.s9api.XsltTransformer;
 import net.sf.saxon.trans.XPathException;
@@ -65,12 +82,12 @@ import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
 import org.apache.maven.plugins.annotations.ResolutionScope;
 import org.apache.maven.project.MavenProject;
-import org.apache.xerces.util.URI;
 import org.xml.sax.Attributes;
 import org.xml.sax.InputSource;
 import org.xml.sax.SAXException;
 import org.xml.sax.XMLFilter;
 import org.xml.sax.XMLReader;
+import org.xml.sax.ext.EntityResolver2;
 import org.xml.sax.helpers.ParserAdapter;
 import org.xml.sax.helpers.XMLFilterImpl;
 import top.marchand.maven.gaulois.compiler.utils.GauloisConfigScanner;
@@ -95,6 +112,9 @@ public class GCMojo extends AbstractCompiler {
     @Parameter
     List<FileSet> gauloisPipeFilesets;
     
+    /**
+     * The catalog file to use to compile
+     */
     @Parameter
     private File catalog;
     
@@ -105,11 +125,23 @@ public class GCMojo extends AbstractCompiler {
     private MavenProject project;
     
     /**
+     * The directory where imported schemas will be copied to. Be aware that
+     * if your schema structure uses relatives parent (../xxx) location, no
+     * file could be copied outside of <tt>${project.build.outputDirectory}</tt>
+     */
+    @Parameter (defaultValue = "${project.build.outputDirectory}/gc/schemas")
+    private File schemasDestination;
+    
+    /**
      * A XSL to post-compile the gaulois-pipe config file, if required
      */
     @Parameter
     private File postCompiler;
     
+    /**
+     * Saxon options, to configure Saxon. 
+     * See {@linkplain https://github.com/cmarchand/saxonOptions-mvn-plug-utils/wiki}
+     */
     @Parameter
     SaxonOptions saxonOptions;
     
@@ -117,6 +149,7 @@ public class GCMojo extends AbstractCompiler {
 
     private XsltExecutable gauloisCompilerXsl;
     private XsltExecutable xutScanner;
+    private XsltExecutable xutFilter;
     
     /**
      * The list of directories where XSL sources are located in
@@ -134,6 +167,8 @@ public class GCMojo extends AbstractCompiler {
     private static final QName QN_DEP_TYPE = new QName("dependency-type");
     private static final QName QN_URI = new QName("uri");
     private static final QName QN_ABS_URI = new QName("abs-uri");
+    private static final QName QN_NAME = new QName("name");
+    private static final QName QN_PARAM_SCHEMAS = new QName("schemas");
 
     @Override
     public void execute() throws MojoExecutionException, MojoFailureException {
@@ -154,9 +189,17 @@ public class GCMojo extends AbstractCompiler {
         loadClasspath();
         gauloisSets = new TreeSet<>();
         foundXsls = new HashMap<>();
+        ThreadLocal<EntityResolver2> th = new ThreadLocal<>();
+        th.set(getEntityResolver());
+        getLog().warn(LOG_PREFIX+getXsltCompiler().getProcessor().getUnderlyingConfiguration().getSourceParserClass());
+
         try {
-            URL url = getClass().getResource("/org/mricuad/xml-utilities/get-xml-file-static-dependency-tree.xsl");
-            xutScanner = getXsltCompiler().compile(new StreamSource(url.openStream()));
+            URL url = getClass().getResource("/org/mricaud/xml-utilities/get-xml-file-static-dependency-tree.xsl");
+            Source src = new StreamSource(url.openStream());
+            // we have to force the system ID
+            src.setSystemId(url.toExternalForm());
+            xutScanner = getXsltCompiler().compile(src);
+            xutFilter = getXsltCompiler().compile(new StreamSource(getClass().getResource("/top/marchand/maven/gaulois/compiler/schema-filter.xsl").openStream()));
         } catch(SaxonApiException | IOException ex) {
             throw new MojoFailureException("while compiling xut xsl", ex);
         }
@@ -179,7 +222,7 @@ public class GCMojo extends AbstractCompiler {
                     File targetFile = targetPath.resolve(sourceFileName).toFile();
                     getLog().debug(LOG_PREFIX+" targetFile="+targetFile.getAbsolutePath());
                     hasError |= scanGauloisFile(source, targetFile, targetDir);
-                } catch(TransformerException ex) {
+                } catch(TransformerException| URISyntaxException ex) {
                     hasError = true;
                     getLog().error("while parsing "+fs.getUri(), ex);
                 }
@@ -187,21 +230,20 @@ public class GCMojo extends AbstractCompiler {
                 List<Path> pathes = fs.getFiles(projectBaseDir, log);
                 // this must be call <strong>after</strong> the call to fs.getFiles, as fs.dir is modified by fs.getFiles
                 Path basedir = new File(fs.getDir()).toPath();
-                getLog().debug("looking in "+basedir.toString());
+                getLog().debug(LOG_PREFIX+"looking in "+basedir.toString());
                 for(Path p: pathes) {
-                    getLog().debug("found "+p.toString());
+                    getLog().debug(LOG_PREFIX+"found "+p.toString());
                     File sourceFile = basedir.resolve(p).toFile();
                     Path targetPath = p.getParent()==null ? targetDir : targetDir.resolve(p.getParent());
                     String sourceFileName = sourceFile.getName();
                     // we keep the same extension for gaulois config files
                     File targetFile = targetPath.resolve(sourceFileName).toFile();
-//                    gauloisConfigToCompile.put(sourceFile, targetFile);
                     try {
                         hasError |= scanGauloisFile(sourceFile, targetFile, targetDir);
-                    } catch(FileNotFoundException ex) {
+                    } catch(FileNotFoundException | URISyntaxException | MalformedURLException ex) {
                         // it can not be thrown but we are required to catch it
                         hasError = true;
-                        getLog().error("while parsing "+p.toString(), ex);
+                        getLog().error(LOG_PREFIX+"while parsing "+p.toString(), ex);
                     }
                 }
             }
@@ -213,7 +255,6 @@ public class GCMojo extends AbstractCompiler {
                     Source xslSource = new StreamSource(xslSystemId);
                     File targetFile = foundXsls.get(xslSystemId).getTargetFile();
                     compileFile(xslSource, targetFile);
-                    // ici, scanner la XSL pour détecter des xsl:import-schema
                 } catch (FileNotFoundException | SaxonApiException ex) {
                     getLog().warn(LOG_PREFIX+" while compiling "+xslSystemId, ex);
                     hasError = true;
@@ -227,7 +268,7 @@ public class GCMojo extends AbstractCompiler {
                     // passer ici les schemas à déclarer
                     compileGaulois(new StreamSource(gs.getGauloisConfigSystemId()), gs.getTargetFile(), gs.getAllSchemas());
                 }
-            } catch(Exception ex) {
+            } catch(SaxonApiException ex) {
                 hasError = true;
                 getLog().error(ex);
             }
@@ -252,11 +293,15 @@ public class GCMojo extends AbstractCompiler {
      * @param targetDir The build dir
      * @return <tt>false</tt> if an error occured
      * @throws java.io.FileNotFoundException If a file is not found. Should never be thrown.
+     * @throws java.net.URISyntaxException If any URI is incorrect
+     * @throws java.net.MalformedURLException Should never occurs
      */
-    protected boolean scanGauloisFile(File sourceFile, File targetFile, Path targetDir) throws FileNotFoundException {
-        return scanGauloisFile(new SAXSource(new InputSource(new FileInputStream(sourceFile))), targetFile, targetDir);
+    protected boolean scanGauloisFile(File sourceFile, File targetFile, Path targetDir) throws FileNotFoundException, URISyntaxException, MalformedURLException {
+        SAXSource source = new SAXSource(new InputSource(new FileInputStream(sourceFile)));
+        source.setSystemId(sourceFile.toURI().toURL().toExternalForm());
+        return scanGauloisFile(source, targetFile, targetDir);
     }
-    protected boolean scanGauloisFile(Source source, File targetFile, Path targetDir) {
+    protected boolean scanGauloisFile(Source source, File targetFile, Path targetDir) throws URISyntaxException {
         try {
             final XMLReader reader = new ParserAdapter(PARSER_FACTORY.newSAXParser().getParser());
             final GauloisConfigScanner scanner = new GauloisConfigScanner(xslSourceDirs, classesDirectory, getUriResolver(), getLog(), classpaths);
@@ -297,6 +342,13 @@ public class GCMojo extends AbstractCompiler {
     protected void compileGaulois(Source source, File target, Set<String> schemas) throws SaxonApiException {
         XsltTransformer tr = gauloisCompilerXsl.load();
         // TODO: set parameter for schemas
+        ArrayList<XdmAtomicValue> values = new ArrayList<>();
+        for(String schema:schemas) {
+            getLog().info(LOG_PREFIX+target.getName()+" has schema: "+schema);
+            values.add(new XdmAtomicValue(schema));
+        }
+        XdmValue sequence = new XdmValue(values);
+        tr.setParameter(QN_PARAM_SCHEMAS, sequence);
         XsltTransformer first = tr;
         // post compiler ?
         XsltTransformer pc = getPostCompiler();
@@ -321,33 +373,88 @@ public class GCMojo extends AbstractCompiler {
         }
         return postCompilerXsl==null ? null : postCompilerXsl.load();
     }
-    protected void scanForSchemas(GauloisXsl xsl) throws SaxonApiException {
+    protected void scanForSchemas(GauloisXsl xsl) throws SaxonApiException, URISyntaxException, IOException {
         XsltTransformer xut = xutScanner.load();
+        xut.setMessageListener(new NullMessageListener());
+        XsltTransformer filter = xutFilter.load();
+        xut.setDestination(filter);
         XdmDestination dest = new XdmDestination();
-        xut.setDestination(dest);
+        Serializer console = getProcessor().newSerializer(System.out);
+        console.setOutputProperty(Serializer.Property.INDENT, "yes");
+        TeeDestination tee = new TeeDestination(console, dest);
+        filter.setDestination(tee);
         XdmNode xslDocument = getBuilder().build(new StreamSource(xsl.getXslSystemId()));
         xut.setInitialContextNode(xslDocument);
         xut.setParameter(new QName(XUT_NS, "xut:get-xml-file-static-dependency-tree.filterDuplicatedDependencies"), new XdmAtomicValue(true));
         xut.transform();
         XdmNode dependencies = dest.getXdmNode();
         // now, walk through dependencies
+        // all first-level childs are imported schemas
         XdmNode file = (XdmNode)(dependencies.axisIterator(Axis.CHILD).next());
         XdmSequenceIterator xsi = file.axisIterator(Axis.CHILD);
         while(xsi.hasNext()) {
-            exploreFile(xsl, (XdmNode)(xsi.next()), xsl.getXslSystemId(), xsl.getTargetFile());
+            exploreFile(xsl, (XdmNode)(xsi.next()));
         }
     }
-    private void exploreFile(GauloisXsl xsl, XdmNode node, String baseUri, File targetParentFile) {
+    private void exploreFile(GauloisXsl xsl, XdmNode node) throws URISyntaxException, IOException {
         String dependencyType = node.getAttributeValue(QN_DEP_TYPE);
-        if(dependencyType.equals("xsl:import-schema")) {
+        if(dependencyType.equals("xsl:import-schema")) { // always true, but for documentation
             String uri = node.getAttributeValue(QN_URI);
             String absUri = node.getAttributeValue(QN_ABS_URI);
-            SchemaTarget targetSchema = getTargetSchemaFile(targetParentFile, uri, absUri);
+            String name = node.getAttributeValue(QN_NAME);
+            SchemaTarget targetSchema = getTargetSchemaFile(name, absUri);
+            xsl.getSchemas().add(targetSchema.getAccessUri());
+            getLog().debug(LOG_PREFIX+"\turi is "+absUri);
+            copyUriToFile(absUri, targetSchema.getFileLocation());
+            XdmSequenceIterator it = node.axisIterator(Axis.CHILD);
+            while(it.hasNext()) {
+                XdmNode schemaNode = (XdmNode)it.next();
+                copySubSchema(targetSchema.getFileLocation(), schemaNode);
+            }
         }
     }
-    private SchemaTarget getTargetSchemaFile(File targetParentFile, String uri, String absUri) {
-        // TODO
-        return null;
+    private void copySubSchema(File parent, XdmNode schemaNode) throws URISyntaxException, IOException {
+        String uri = schemaNode.getAttributeValue(QN_URI);
+        String absUri = schemaNode.getAttributeValue(QN_ABS_URI);
+        File schemaFile = parent.toPath().resolve(uri).toFile();
+        copyFile(new File(new URI(absUri)), schemaFile);
+        XdmSequenceIterator it = schemaNode.axisIterator(Axis.CHILD);
+        while(it.hasNext()) {
+            XdmNode subSchemaNode = (XdmNode)it.next();
+            copySubSchema(schemaFile, subSchemaNode);
+        }
+    }
+    private SchemaTarget getTargetSchemaFile(String name, String absUri) {
+        File destSchema = new File(getSchemasDestination(), name);
+        Path p = classesDirectory.toPath().relativize(destSchema.toPath());
+        String accessUri = "cp:/"+p.toString();
+        return new SchemaTarget(accessUri, destSchema);
+    }
+    
+    private void copyFile(File source, File dest) throws IOException {
+        dest.getParentFile().mkdirs();
+        try (
+                FileChannel in = new FileInputStream(source).getChannel(); 
+                FileChannel out = new FileOutputStream(dest).getChannel()) {
+            in.transferTo (0, in.size(), out);
+        }
+    }
+    
+    private void copyUriToFile(String uri, File dest) throws IOException, URISyntaxException {
+        dest.getParentFile().mkdirs();
+        URL url = new URI(uri).toURL();
+        InputStream is = url.openStream();
+        try (
+                ReadableByteChannel in = Channels.newChannel(is);
+                FileChannel out = new FileOutputStream(dest).getChannel()) {
+            final long size = 5*1024;
+            long offset = 0;
+            long  vol = out.transferFrom(in, 0, size);
+            while(vol==size) {
+                offset+=vol;
+                vol = out.transferFrom(in, offset, size);
+            }
+        }
     }
     private void loadClasspath() {
         try {
@@ -361,13 +468,44 @@ public class GCMojo extends AbstractCompiler {
             getLog().error(LOG_PREFIX+ex.getMessage(),ex);
         }
     }
+
+    /**
+     * Returns the schemas destination
+     * @return The schemas destination directory
+     */
+    public File getSchemasDestination() {
+        return schemasDestination;
+    }
+    
+    /**
+     * A class to store a schema location.
+     */
     private class SchemaTarget {
-        private String accessUri;
-        private File fileLocation;
+        private final String accessUri;
+        private final File fileLocation;
+        public SchemaTarget(final String accessUri, final File fileLocation) {
+            super();
+            this.accessUri = accessUri;
+            this.fileLocation = fileLocation;
+        }
+
+        public String getAccessUri() {
+            return accessUri;
+        }
+
+        public File getFileLocation() {
+            return fileLocation;
+        }
+        
     }
 
     @Override
     public SaxonOptions getSaxonOptions() {
         return saxonOptions;
+    }
+    
+    private class NullMessageListener implements MessageListener {
+        @Override
+        public void message(XdmNode xn, boolean bln, SourceLocator sl) {}
     }
 }

@@ -17,12 +17,32 @@
   
   <xsl:output saxon:indent-spaces="2" indent="yes"/>
   
+  
+  <xsl:param name="schemas" as="xs:string*"/>
+  
   <xd:doc>
     <xd:desc>Une simple recopie</xd:desc>
   </xd:doc>
   <xsl:template match="@* | node()">
     <xsl:copy>
       <xsl:apply-templates select="@* | node()"/>
+    </xsl:copy>
+  </xsl:template>
+  
+  <xd:doc>
+    <xd:desc>Overwrited to put schemas declaration in</xd:desc>
+  </xd:doc>
+  <xsl:template match="gc:config">
+    <xsl:copy>
+      <xsl:apply-templates select="gc:namespaces"/>
+      <xsl:if test="not(empty($schemas))">
+        <grammars xmlns="http://efl.fr/chaine/saxon-pipe/config">
+          <xsl:for-each select="$schemas">
+            <schema xmlns="http://efl.fr/chaine/saxon-pipe/config" href="{.}"/>
+          </xsl:for-each>
+        </grammars>
+      </xsl:if>
+      <xsl:apply-templates select="* except (gc:namespaces, gc:grammars)"/>
     </xsl:copy>
   </xsl:template>
   
