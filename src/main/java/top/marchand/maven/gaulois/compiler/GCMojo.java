@@ -31,7 +31,6 @@ import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.net.URL;
-import java.net.MalformedURLException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -42,10 +41,12 @@ import java.util.TreeSet;
 import javax.xml.parsers.ParserConfigurationException;
 import javax.xml.parsers.SAXParserFactory;
 import javax.xml.transform.Source;
+import javax.xml.transform.SourceLocator;
 import javax.xml.transform.TransformerException;
 import javax.xml.transform.sax.SAXSource;
 import javax.xml.transform.stream.StreamSource;
 import net.sf.saxon.s9api.Axis;
+import net.sf.saxon.s9api.MessageListener;
 import net.sf.saxon.s9api.QName;
 import net.sf.saxon.s9api.SaxonApiException;
 import net.sf.saxon.s9api.Serializer;
@@ -60,12 +61,13 @@ import org.apache.maven.artifact.DependencyResolutionRequiredException;
 import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugin.MojoFailureException;
 import org.apache.maven.plugin.logging.Log;
+import org.apache.maven.plugins.annotations.Component;
 import org.apache.maven.plugins.annotations.LifecyclePhase;
 import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
 import org.apache.maven.plugins.annotations.ResolutionScope;
 import org.apache.maven.project.MavenProject;
-import org.apache.xerces.util.URI;
+import org.apache.maven.shared.dependency.graph.DependencyGraphBuilder;
 import org.xml.sax.Attributes;
 import org.xml.sax.InputSource;
 import org.xml.sax.SAXException;
@@ -81,7 +83,14 @@ import top.marchand.xml.maven.plugin.xsl.AbstractCompiler;
 
 @Mojo(name="gaulois-compiler", defaultPhase = LifecyclePhase.COMPILE, requiresDependencyResolution = ResolutionScope.COMPILE)
 public class GCMojo extends AbstractCompiler {
-    
+    @Parameter( defaultValue = "${project}", readonly = true, required = true )
+    private MavenProject project;
+    @Override
+    public MavenProject getProject() { return project; }
+    @Component( hint = "default" )
+    private DependencyGraphBuilder dependencyGraphBuilder;
+    @Override
+    public DependencyGraphBuilder getGraphBuilder() { return dependencyGraphBuilder; }
     /**
      * The directory containing generated classes of the project being tested. 
      * This will be included after the test classes in the test classpath.
@@ -100,9 +109,6 @@ public class GCMojo extends AbstractCompiler {
     
     @Parameter(defaultValue = "${project.basedir}")
     private File projectBaseDir;
-    
-    @Parameter( defaultValue = "${project}", readonly = true, required = true )
-    private MavenProject project;
     
     /**
      * A XSL to post-compile the gaulois-pipe config file, if required
@@ -155,8 +161,10 @@ public class GCMojo extends AbstractCompiler {
         gauloisSets = new TreeSet<>();
         foundXsls = new HashMap<>();
         try {
-            URL url = getClass().getResource("/org/mricuad/xml-utilities/get-xml-file-static-dependency-tree.xsl");
-            xutScanner = getXsltCompiler().compile(new StreamSource(url.openStream()));
+            URL url = getClass().getResource("/org/mricaud/xml-utilities/get-xml-file-static-dependency-tree.xsl");
+            StreamSource ssource = new StreamSource(url.openStream());
+            ssource.setSystemId(url.toExternalForm());
+            xutScanner = getXsltCompiler().compile(ssource);
         } catch(SaxonApiException | IOException ex) {
             throw new MojoFailureException("while compiling xut xsl", ex);
         }
@@ -216,7 +224,6 @@ public class GCMojo extends AbstractCompiler {
                     // ici, scanner la XSL pour détecter des xsl:import-schema
                 } catch (FileNotFoundException | SaxonApiException ex) {
                     getLog().warn(LOG_PREFIX+" while compiling "+xslSystemId, ex);
-                    hasError = true;
                 }
             }
             Source xsl = new StreamSource(this.getClass().getResourceAsStream("/top/marchand/maven/gaulois/compiler/gaulois-compiler.xsl"));
@@ -227,8 +234,7 @@ public class GCMojo extends AbstractCompiler {
                     // passer ici les schemas à déclarer
                     compileGaulois(new StreamSource(gs.getGauloisConfigSystemId()), gs.getTargetFile(), gs.getAllSchemas());
                 }
-            } catch(Exception ex) {
-                hasError = true;
+            } catch(SaxonApiException ex) {
                 getLog().error(ex);
             }
         } else {
@@ -254,9 +260,16 @@ public class GCMojo extends AbstractCompiler {
      * @throws java.io.FileNotFoundException If a file is not found. Should never be thrown.
      */
     protected boolean scanGauloisFile(File sourceFile, File targetFile, Path targetDir) throws FileNotFoundException {
-        return scanGauloisFile(new SAXSource(new InputSource(new FileInputStream(sourceFile))), targetFile, targetDir);
+        String systemId = sourceFile.toURI().toString();
+        getLog().debug("scanGauloisFile("+systemId+",File, Path);");
+        InputSource is = new InputSource(new FileInputStream(sourceFile));
+        is.setSystemId(systemId);
+        SAXSource source = new SAXSource(is);
+        source.setSystemId(systemId);
+        return scanGauloisFile(source, targetFile, targetDir);
     }
     protected boolean scanGauloisFile(Source source, File targetFile, Path targetDir) {
+        assert(source.getSystemId()!=null);
         try {
             final XMLReader reader = new ParserAdapter(PARSER_FACTORY.newSAXParser().getParser());
             final GauloisConfigScanner scanner = new GauloisConfigScanner(xslSourceDirs, classesDirectory, getUriResolver(), getLog(), classpaths);
@@ -325,6 +338,10 @@ public class GCMojo extends AbstractCompiler {
         XsltTransformer xut = xutScanner.load();
         XdmDestination dest = new XdmDestination();
         xut.setDestination(dest);
+        xut.setMessageListener(new MessageListener() {
+            @Override
+            public void message(XdmNode xn, boolean bln, SourceLocator sl) { }
+        });
         XdmNode xslDocument = getBuilder().build(new StreamSource(xsl.getXslSystemId()));
         xut.setInitialContextNode(xslDocument);
         xut.setParameter(new QName(XUT_NS, "xut:get-xml-file-static-dependency-tree.filterDuplicatedDependencies"), new XdmAtomicValue(true));
