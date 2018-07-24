@@ -196,6 +196,7 @@ public class GCMojo extends AbstractCompiler {
             StreamSource ssource = new StreamSource(url.openStream());
             ssource.setSystemId(url.toExternalForm());
             xutScanner = getXsltCompiler().compile(ssource);
+            xutFilter = getXsltCompiler().compile(new StreamSource(getClass().getResource("/top/marchand/maven/gaulois/compiler/schema-filter.xsl").openStream()));
         } catch(SaxonApiException | IOException ex) {
             throw new MojoFailureException("while compiling xut xsl", ex);
         }
