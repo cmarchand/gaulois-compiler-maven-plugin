@@ -373,12 +373,13 @@ public class GCMojo extends AbstractCompiler {
         return postCompilerXsl==null ? null : postCompilerXsl.load();
     }
     protected void scanForSchemas(GauloisXsl xsl) throws SaxonApiException, URISyntaxException, IOException {
+        getLog().debug(LOG_PREFIX+" scanning for schema "+xsl.getXslSystemId());
         XsltTransformer xut = xutScanner.load();
         xut.setMessageListener(new NullMessageListener());
         XsltTransformer filter = xutFilter.load();
         xut.setDestination(filter);
         XdmDestination dest = new XdmDestination();
-        xut.setDestination(dest);
+        filter.setDestination(dest);
         xut.setMessageListener(new MessageListener() {
             @Override
             public void message(XdmNode xn, boolean bln, SourceLocator sl) { }
@@ -398,9 +399,10 @@ public class GCMojo extends AbstractCompiler {
     }
     private void exploreFile(GauloisXsl xsl, XdmNode node) throws URISyntaxException, IOException {
         String dependencyType = node.getAttributeValue(QN_DEP_TYPE);
+        String absUri = node.getAttributeValue(QN_ABS_URI);
+        getLog().debug(LOG_PREFIX+"\texploreFile <"+node.getNodeName()+" "+QN_DEP_TYPE.toString()+"="+dependencyType+" absUri="+absUri);
         if(dependencyType.equals("xsl:import-schema")) { // always true, but for documentation
             String uri = node.getAttributeValue(QN_URI);
-            String absUri = node.getAttributeValue(QN_ABS_URI);
             String name = node.getAttributeValue(QN_NAME);
             SchemaTarget targetSchema = getTargetSchemaFile(name, absUri);
             xsl.getSchemas().add(targetSchema.getAccessUri());
