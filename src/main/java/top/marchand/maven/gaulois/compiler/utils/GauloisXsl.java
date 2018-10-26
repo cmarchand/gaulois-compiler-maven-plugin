@@ -39,11 +39,13 @@ public class GauloisXsl implements Comparable<GauloisXsl> {
     private final String xslSystemId;
     private final Set<String> schemas;
     private final File targetFile;
+    private final String originalSystemId;
     
-    public GauloisXsl(String xslSystemId, final File targetFile) {
+    public GauloisXsl(String xslSystemId, final File targetFile, final String originalSystemId) {
         super();
         this.xslSystemId=xslSystemId;
         this.targetFile = targetFile;
+        this.originalSystemId=originalSystemId;
         schemas = new TreeSet<>();
     }
 
@@ -57,6 +59,10 @@ public class GauloisXsl implements Comparable<GauloisXsl> {
 
     public File getTargetFile() {
         return targetFile;
+    }
+    
+    public String getOriginalSystemId() {
+        return originalSystemId;
     }
 
     @Override

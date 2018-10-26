@@ -40,6 +40,7 @@ import java.nio.channels.FileChannel;
 import java.nio.channels.ReadableByteChannel;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -52,6 +53,7 @@ import javax.xml.transform.SourceLocator;
 import javax.xml.transform.TransformerException;
 import javax.xml.transform.sax.SAXSource;
 import javax.xml.transform.stream.StreamSource;
+import net.sf.saxon.ma.map.MapItem;
 import net.sf.saxon.s9api.Axis;
 import net.sf.saxon.s9api.MessageListener;
 import net.sf.saxon.s9api.QName;
@@ -59,6 +61,7 @@ import net.sf.saxon.s9api.SaxonApiException;
 import net.sf.saxon.s9api.Serializer;
 import net.sf.saxon.s9api.XdmAtomicValue;
 import net.sf.saxon.s9api.XdmDestination;
+import net.sf.saxon.s9api.XdmMap;
 import net.sf.saxon.s9api.XdmNode;
 import net.sf.saxon.s9api.XdmSequenceIterator;
 import net.sf.saxon.s9api.XdmValue;
@@ -167,6 +170,8 @@ public class GCMojo extends AbstractCompiler {
     private static final QName QN_ABS_URI = new QName("abs-uri");
     private static final QName QN_NAME = new QName("name");
     private static final QName QN_PARAM_SCHEMAS = new QName("schemas");
+    private static final QName QN_PARAM_XSLMAP = new QName("xslMap");
+    private static final QName QN_TARGET_PATH = new QName("targetPath");
 
     @Override
     public void execute() throws MojoExecutionException, MojoFailureException {
@@ -245,6 +250,9 @@ public class GCMojo extends AbstractCompiler {
                 }
             }
         }
+        StringBuilder sb = new StringBuilder();
+        for(GauloisXsl gx: foundXsls.values()) sb.append(gx.getXslSystemId()).append("->").append(gx.getTargetFile().getAbsolutePath()).append("\n");
+        getLog().debug("Found XSL: "+sb.toString());
         if(!hasError) {
             for(String xslSystemId: foundXsls.keySet()) {
                 try {
@@ -259,10 +267,12 @@ public class GCMojo extends AbstractCompiler {
             Source xsl = new StreamSource(this.getClass().getResourceAsStream("/top/marchand/maven/gaulois/compiler/gaulois-compiler.xsl"));
             try {
                 gauloisCompilerXsl = getXsltCompiler().compile(xsl);
+                // we need to construct a map <xsl resolved URI -> target path>
+                XdmMap xslMap = buildXslMap(foundXsls);
                 for(GauloisSet gs: gauloisSets) {
                     getLog().debug(LOG_PREFIX+" compiling "+gs.getGauloisConfigSystemId());
                     // passer ici les schemas à déclarer
-                    compileGaulois(new StreamSource(gs.getGauloisConfigSystemId()), gs.getTargetFile(), gs.getAllSchemas());
+                    compileGaulois(new StreamSource(gs.getGauloisConfigSystemId()), gs.getTargetFile(), gs.getAllSchemas(), xslMap);
                 }
             } catch(SaxonApiException ex) {
                 getLog().error(ex);
@@ -270,6 +280,14 @@ public class GCMojo extends AbstractCompiler {
         } else {
             getLog().warn(LOG_PREFIX+" Errors occured");
         }
+    }
+    
+    private XdmMap buildXslMap(Map<String,GauloisXsl> xsls) {
+        Map<String,String> tempMap = new HashMap<>();
+        for(GauloisXsl gx: xsls.values()) {
+            tempMap.put(gx.getOriginalSystemId(), gx.getTargetFile().getAbsolutePath());
+        }
+        return XdmMap.makeMap(tempMap);
     }
     
     private static final String LOG_PREFIX = "[gaulois-compiler]";
@@ -324,7 +342,8 @@ public class GCMojo extends AbstractCompiler {
                     for(Source xslSource: scanner.getXslToCompile().keySet()) {
                         GauloisXsl xsl = foundXsls.get(xslSource.getSystemId());
                         if(xsl==null) {
-                            xsl = new GauloisXsl(xslSource.getSystemId(), scanner.getXslToCompile().get(xslSource));
+                            GauloisConfigScanner.FileInfo fileInfo =  scanner.getXslToCompile().get(xslSource);
+                            xsl = new GauloisXsl(xslSource.getSystemId(), fileInfo.getFile(), fileInfo.getOriginalSystemId());
                             foundXsls.put(xslSource.getSystemId(), xsl);
                             scanForSchemas(xsl);
                         }
@@ -338,16 +357,24 @@ public class GCMojo extends AbstractCompiler {
             return true;
         }
     }
-    protected void compileGaulois(Source source, File target, Set<String> schemas) throws SaxonApiException {
+    protected void compileGaulois(Source source, File target, Set<String> schemas, XdmMap xslMap) throws SaxonApiException {
         XsltTransformer tr = gauloisCompilerXsl.load();
-        // TODO: set parameter for schemas
+        tr.setURIResolver(getUriResolver());
         ArrayList<XdmAtomicValue> values = new ArrayList<>();
         for(String schema:schemas) {
             getLog().info(LOG_PREFIX+target.getName()+" has schema: "+schema);
             values.add(new XdmAtomicValue(schema));
         }
         XdmValue sequence = new XdmValue(values);
+        tr.setMessageListener(new MessageListener() {
+            @Override
+            public void message(XdmNode xn, boolean bln, SourceLocator sl) {
+                getLog().debug(xn.toString());
+            }
+        });
         tr.setParameter(QN_PARAM_SCHEMAS, sequence);
+        tr.setParameter(QN_PARAM_XSLMAP, xslMap);
+        tr.setParameter(QN_TARGET_PATH, XdmValue.makeValue(classesDirectory.getAbsolutePath()));
         XsltTransformer first = tr;
         // post compiler ?
         XsltTransformer pc = getPostCompiler();

@@ -56,7 +56,7 @@ public class GauloisConfigScanner extends DefaultHandler2 {
     boolean hasError = false;
     private final List<File> xslDirectories;
     private final File outputDirectory;
-    private final Map<Source,File> xslToCompile;
+    private final Map<Source,FileInfo> xslToCompile;
     private final List<String> errors;
     private final URIResolver resolver;
     private int uriErrorCount = 0;
@@ -95,7 +95,7 @@ public class GauloisConfigScanner extends DefaultHandler2 {
                     log.debug("targetPath="+targetPath);
                     File targetXsl = new File(outputDirectory, targetPath);
                     
-                    xslToCompile.put(source, targetXsl);
+                    xslToCompile.put(source, new FileInfo(targetXsl, href));
                 } catch(TransformerException | NullPointerException ex) {
                     hasError = true;
                     if(uriErrorCount<10) {
@@ -121,7 +121,7 @@ public class GauloisConfigScanner extends DefaultHandler2 {
                             is.setPublicId(systemID);
                             SAXSource ss = new SAXSource(is);
                             ss.setSystemId(systemID);
-                            xslToCompile.put(ss, targetXsl);
+                            xslToCompile.put(ss, new FileInfo(targetXsl, href));
                             found = true;
                         } catch(FileNotFoundException ex) {
                             // is it really possible ? We have checked xsl.exists()
@@ -146,7 +146,7 @@ public class GauloisConfigScanner extends DefaultHandler2 {
                             String targetPath = shortPath.concat(baseName).concat(".sef");
                             log.debug("targetPath="+targetPath);
                             File targetXsl = new File(outputDirectory, targetPath);
-                            xslToCompile.put(source, targetXsl);
+                            xslToCompile.put(source, new FileInfo(targetXsl, href));
                             found = true;
                         }
                     } catch(TransformerException | NullPointerException ex) {
@@ -158,7 +158,7 @@ public class GauloisConfigScanner extends DefaultHandler2 {
                     }
                 }
                 if(!found) {
-                    // search throw classpath
+                    // search thru classpath
                     log.debug("searching for "+href+" in classpath");
                     for(String cp: classpathes) {
                         try {
@@ -180,7 +180,7 @@ public class GauloisConfigScanner extends DefaultHandler2 {
                                 File targetXsl = new File(outputDirectory, targetPath);
                                 Source source = new SAXSource(new InputSource(is));
                                 source.setSystemId(systemId);
-                                xslToCompile.put(source, targetXsl);
+                                xslToCompile.put(source, new FileInfo(targetXsl, href));
                                 found = true;
                             }
                         } catch(FileNotFoundException ex) {
@@ -200,6 +200,25 @@ public class GauloisConfigScanner extends DefaultHandler2 {
     
     public boolean hasErrors() { return hasError; }
     public List<String> getErrorMessages() { return errors; }
-    public Map<Source,File> getXslToCompile() { return xslToCompile; }
+    public Map<Source,FileInfo> getXslToCompile() { return xslToCompile; }
     
+    public class FileInfo {
+        private final File file;
+        private final String originalSystemId;
+        
+        public FileInfo(final File file, final String originalSystemId) {
+            super();
+            this.file=file;
+            this.originalSystemId=originalSystemId;
+        }
+
+        public File getFile() {
+            return file;
+        }
+
+        public String getOriginalSystemId() {
+            return originalSystemId;
+        }
+        
+    }
 }
