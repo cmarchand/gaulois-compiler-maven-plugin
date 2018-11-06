@@ -4,7 +4,7 @@
 
   <groupId>top.marchand.xml.maven</groupId>
   <artifactId>gaulois-compiler-maven-plugin</artifactId>
-  <version>1.1.4-SNAPSHOT</version>
+  <version>1.1.4</version>
   <packaging>maven-plugin</packaging>
 
   <name>Gaulois Compiler</name>
