@@ -456,7 +456,7 @@ public class GCMojo extends AbstractCompiler {
     private SchemaTarget getTargetSchemaFile(String name, String absUri) {
         File destSchema = new File(getSchemasDestination(), name);
         Path p = classesDirectory.toPath().relativize(destSchema.toPath());
-        String accessUri = "cp:/"+p.toString();
+        String accessUri = "cp:/"+p.toString().replaceAll("\\\\", "/");
         return new SchemaTarget(accessUri, destSchema);
     }
     
