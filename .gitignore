@@ -1,1 +1,4 @@
 target/
+src/test/xspec/**/xspec/
+src/test/xspec/**/*.html
+**/.DS_Store

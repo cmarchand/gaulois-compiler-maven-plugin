@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<x:description 
+  xmlns:x="http://www.jenitennison.com/xslt/xspec" 
+  xmlns:local="top:marchand:xml:maven:gaulois:compiler"
+  xmlns:map="http://www.w3.org/2005/xpath-functions/map"
+  stylesheet="../../main/resources/top/marchand/maven/gaulois/compiler/gaulois-compiler.xsl"
+  xslt-version="3.0">
+  
+  <x:param name="xslMap" select="map{'1': 'yes', '2': 'no'}"/>
+  <x:param name="targetPath" select="''"/>
+  
+  <x:scenario label="Scenario for testing escape functrion">
+    <x:call function="local:escapeUri">
+      <x:param>cp:\xf-sas\els\jurisprudence\jurisprudence2editorialEntity.sef</x:param>
+    </x:call>
+
+    <x:expect label="Slashes instead of back" select="'cp:/xf-sas/els/jurisprudence/jurisprudence2editorialEntity.sef'"/>
+  </x:scenario>
+</x:description>

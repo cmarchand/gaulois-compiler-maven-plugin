@@ -5,6 +5,7 @@
   xmlns:xd="http://www.oxygenxml.com/ns/doc/xsl"
   xmlns:gc="http://efl.fr/chaine/saxon-pipe/config"
   xmlns:map="http://www.w3.org/2005/xpath-functions/map"
+  xmlns:local="top:marchand:xml:maven:gaulois:compiler"
   xmlns:saxon="http://saxon.sf.net/"
   exclude-result-prefixes="#all"
   expand-text="true"
@@ -70,7 +71,16 @@
     <!-- removes target directory name and adds cp:/ protocol -->
     <xsl:variable name="compiledUri" as="xs:string*" select="concat('cp:', substring-after($compiledLocation, $targetPath))"/>
     <xsl:message>compiledUri: {$compiledUri}</xsl:message>
-    <xsl:attribute name="{name(.)}" select="$compiledUri"/>
+    <xsl:attribute name="{name(.)}" select="local:escapeUri($compiledUri)"/>
   </xsl:template>
+  
+  <xd:doc>
+    <xd:desc>Changes backslashes to slashes, thanks to Windows</xd:desc>
+    <xd:param name="source">The URI to escape</xd:param>
+  </xd:doc>
+  <xsl:function name="local:escapeUri" as="xs:string">
+    <xsl:param name="source" as="xs:string"/>
+    <xsl:value-of select="replace($source, '\\', '/')"/>
+  </xsl:function>
   
 </xsl:stylesheet>
