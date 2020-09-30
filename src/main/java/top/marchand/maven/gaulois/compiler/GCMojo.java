@@ -443,15 +443,18 @@ public class GCMojo extends AbstractCompiler {
         }
     }
     private void copySubSchema(File parent, XdmNode schemaNode) throws URISyntaxException, IOException {
-        String uri = schemaNode.getAttributeValue(QN_URI);
-        String absUri = schemaNode.getAttributeValue(QN_ABS_URI);
-        File schemaFile = parent.toPath().resolve(uri).toFile();
-        copyFile(new File(new URI(absUri)), schemaFile);
-        XdmSequenceIterator it = schemaNode.axisIterator(Axis.CHILD);
-        while(it.hasNext()) {
-            XdmNode subSchemaNode = (XdmNode)it.next();
-            copySubSchema(schemaFile, subSchemaNode);
-        }
+        String dependencyType = schemaNode.getAttributeValue(QN_DEP_TYPE);
+		if(dependencyType != null && dependencyType.equals("xsl:import-schema")) { // NOT always true => sometimes we get a <report> child with info about the parent file
+			String uri = schemaNode.getAttributeValue(QN_URI);
+			String absUri = schemaNode.getAttributeValue(QN_ABS_URI);
+			File schemaFile = parent.toPath().resolve(uri).toFile();
+			copyFile(new File(new URI(absUri)), schemaFile);
+			XdmSequenceIterator it = schemaNode.axisIterator(Axis.CHILD);
+			while(it.hasNext()) {
+				XdmNode subSchemaNode = (XdmNode)it.next();
+				copySubSchema(schemaFile, subSchemaNode);
+			}
+		}
     }
     private SchemaTarget getTargetSchemaFile(String name, String absUri) {
         File destSchema = new File(getSchemasDestination(), name);
